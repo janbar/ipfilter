@@ -40,13 +40,13 @@ const char * db_format();
  * The db handle must be closed to free allocated resources (see close_db).
  */
 
-/* Create database with the given segment size (0 to default 256).
+/* Create database with the given segment size (0 for default 512).
  * Argument 'seg_size' defines the number of node per extent. The max count of
  * extent is fixed to 32K. Therefore the given value will define the max size
  * of the database as follows:
  *   bytes_per_node = 8
- *   max_nodes      = 32K * seg_size                : using 256 => 8M
- *   max_db_size    = byte_per_node * max_nodes     : using 256 => 128MB
+ *   max_nodes      = 32K * seg_size                : using 512 => 16M
+ *   max_db_size    = byte_per_node * max_nodes     : using 512 => 128MB
  */
 DB * create_db(unsigned seg_size);
 

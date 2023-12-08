@@ -30,6 +30,7 @@
 static const char * g_dbtag = "IPF2";
 static const int g_indianness = 0xff000000;
 
+#define SEGS 0x200      /* base of segment size */
 #define LEAF 0x80000000 /* bit 31 */
 #define ADDR 0x7fffffff /* bit 30-0 */
 
@@ -55,7 +56,7 @@ typedef struct
 
 struct DB
 {
-  db_header header;
+  db_header * header;
   node **   data;
   void (*destructor)(DB*);
   mmap_ctx mmap_ctx;
@@ -151,15 +152,18 @@ static int _release_mounted(DB * db)
 
 static int add_segment(DB * db)
 {
+  int grow = 1;
+  uint16_t osz;
+  node ** new;
+  db_header * header = db->header;
+
   /* freelist exists ? */
-  if (db->header.free_node != 0)
+  if (header->free_node != 0)
     return 0;
   /* grow the segment array */
-  uint16_t osz = db->header.segment_count;
-  int grow = 1;
+  osz = header->segment_count;
   if ((ADDR - grow) < osz)
     return -(ERANGE);
-  node ** new;
   if (osz == 0)
     new = (node**) calloc(grow, sizeof (node*));
   else
@@ -170,21 +174,24 @@ static int add_segment(DB * db)
   /* initialize new segment(s) */
   while (0 < grow--)
   {
-    node * seg = (node*) calloc(db->header.segment_size, sizeof (node));
+    int n;
+    node * _node;
+    node * seg = (node*) calloc(header->segment_size, sizeof (node));
+
     if (!seg)
       return -(ENOMEM);
     /* chain all members on front of the freelist */
-    node * _node = seg;
-    for (int n = 1; n < db->header.segment_size; ++n)
+    _node = seg;
+    for (n = 1; n < header->segment_size; ++n)
     {
       _node->raw0 = (osz << 16) + n + 1; /* ids start from 1 */
       _node++;
     }
     /* attach the segment and update freelist front */
     db->data[osz] = seg;
-    _node->raw0 = db->header.free_node;
-    db->header.free_node = (osz << 16) + 1; /* ids start from 1 */
-    db->header.segment_count = ++osz;
+    _node->raw0 = header->free_node;
+    header->free_node = (osz << 16) + 1; /* ids start from 1 */
+    header->segment_count = ++osz;
   }
   return 1;
 }
@@ -198,17 +205,19 @@ static node * get_node(DB * db, uint32_t node_id)
     return &(db->data[segment][nodenum - 1]); /* ids start from 1 */
   }
   /* return the root node */
-  return get_node(db, db->header.root_node);
+  return get_node(db, db->header->root_node);
 }
 
 static node * new_node(DB * db, uint32_t * node_id)
 {
+  db_header * header = db->header;
+  
   /* get node from freelist */
-  if (db->header.free_node)
+  if (header->free_node)
   {
-    *node_id = db->header.free_node;
+    *node_id = header->free_node;
     node * freenode = get_node(db, *node_id);
-    db->header.free_node = freenode->raw0 & ADDR;
+    header->free_node = freenode->raw0 & ADDR;
     freenode->raw0 = 0;
     return freenode;
   }
@@ -219,14 +228,20 @@ static node * new_node(DB * db, uint32_t * node_id)
 
 static void _free_db(DB * db)
 {
+  /* free data */
   if (db->data)
   {
-    for (int s = 0; s < db->header.segment_count; ++s)
+    int s;
+    for (s = 0; s < db->header->segment_count; ++s)
     {
       free(db->data[s]);
     }
     free(db->data);
   }
+  /* free header */
+  if (db->header)
+    free(db->header);
+  /* free db skeleton */
   free(db);
 }
 
@@ -237,33 +252,42 @@ const char * db_format()
 
 DB * create_db(unsigned seg_size)
 {
-  uint16_t sz = (seg_size & 0xffff);
+  db_header * header;
+  uint16_t n = (seg_size & 0xffff) / SEGS;
   DB * db = (DB*) malloc(sizeof (DB));
   if (!db)
     return NULL;
   memset(db, '\0', sizeof (DB));
-  db->header.segment_count = 0;
-  db->header.segment_size = (sz > 0x100 ? sz : 0x100);
-  db->header.free_node = 0;
+  header = (db_header*) malloc(sizeof (db_header));
+  if (!header)
+  {
+    _free_db(db);
+    return NULL;
+  }
+  header->segment_count = 0;
+  header->segment_size = (n == 0 ? SEGS : n * SEGS);
+  header->free_node = 0;
+  db->header = header;
   db->destructor = _free_db;
   if (add_segment(db) != 1)
   {
-    free(db);
+    _free_db(db);
     return NULL;
   }
-  new_node(db, &(db->header.root_node));
+  new_node(db, &(db->header->root_node));
   return db;
 }
 
 void stat_db(DB * db)
 {
+  db_header * header = db->header;
   printf("%s: segcnt=%u segsz=%u freelist=%08x rootnode=%08x totsz=%lu\n",
          __FUNCTION__,
-         (unsigned) db->header.segment_count,
-         (unsigned) db->header.segment_size,
-         db->header.free_node,
-         db->header.root_node,
-         db->header.segment_count * db->header.segment_size * sizeof (node));
+         (unsigned) header->segment_count,
+         (unsigned) header->segment_size,
+         header->free_node,
+         header->root_node,
+         header->segment_count * header->segment_size * sizeof (node));
 }
 
 void close_db(DB ** db)
@@ -275,8 +299,9 @@ void close_db(DB ** db)
 int create_record(DB * db, cidr_address * adr)
 {
   node * n = get_node(db, 0);
-  int v = 0, ln = adr->prefix - 1;
-  for (int b = 0; b < adr->prefix; ++b)
+  int b, v = 0, ln = adr->prefix - 1;
+
+  for (b = 0; b < adr->prefix; ++b)
   {
     int c = b >> 3;
     int d = 7 - b + (c << 3);
@@ -319,8 +344,9 @@ int create_record(DB * db, cidr_address * adr)
 int find_record(DB * db, cidr_address * adr)
 {
   node * n = get_node(db, 0);
-  int v = 0;
-  for (int b = 0; b < adr->prefix; ++b)
+  int b, v = 0;
+
+  for (b = 0; b < adr->prefix; ++b)
   {
     int c = b >> 3;
     int p = 7 - b + (c << 3);
@@ -349,27 +375,26 @@ int find_record(DB * db, cidr_address * adr)
 
 int write_db_file(DB * db, const char * filepath)
 {
+  int i;
+  db_header * header = db->header;
   FILE * file = fopen(filepath, "wb+");
-  size_t r;
+
   if (!file)
     return -(ENOENT);
   /* write tag */
-  r = fwrite(g_dbtag, DBTAG_LEN, 1, file);
-  if (r != 1)
+  if (fwrite(g_dbtag, DBTAG_LEN, 1, file) != 1)
     goto fail;
   /* write indianess check */
-  r = fwrite(&g_indianness, sizeof (int), 1, file);
-  if (r != 1)
+  if (fwrite(&g_indianness, sizeof (int), 1, file) != 1)
     goto fail;
   /* write header */
-  r = fwrite(&(db->header), sizeof (db_header), 1, file);
-  if (r != 1)
+  if (fwrite(header, sizeof (db_header), 1, file) != 1)
     goto fail;
   /* write data */
-  for (int i = 0; i < db->header.segment_count; ++i)
+  for (i = 0; i < header->segment_count; ++i)
   {
-    r = fwrite(db->data[i], sizeof (node), db->header.segment_size, file);
-    if (r != db->header.segment_size)
+    if (fwrite(db->data[i], sizeof (node), header->segment_size, file)
+            != header->segment_size)
       goto fail;
   }
   fclose(file);
@@ -409,9 +434,11 @@ static void _free_mounted_db(DB * db)
 
 DB * mount_db(const char * filepath)
 {
+  int i;
   mmap_ctx mmap_ctx;
   char * addr;
   DB * db;
+  db_header * header;
   FILE * file;
 
   /* return the already mounted db */
@@ -431,29 +458,34 @@ DB * mount_db(const char * filepath)
   addr = (char*) mmap_ctx.addr;
   if (memcmp(addr, g_dbtag, DBTAG_LEN) != 0)
     goto fail1;
-  addr += 4;
+  addr += DBTAG_LEN;
   /* check endianness */
   if (memcmp(addr, &g_indianness, sizeof (int)) != 0)
     goto fail1;
   addr += sizeof (int);
   /* initialize database */
   db = (DB*) malloc(sizeof (DB));
-  memcpy(db, addr, sizeof (db_header));
+  if (!db)
+    goto fail1;
+  header = (db_header*) addr;
   addr += sizeof (db_header);
   /* check mmap size for the rest */
   if (mmap_ctx.bytes < DBFILE_HEADER_SZ +
-          (db->header.segment_count * db->header.segment_size * sizeof (node)))
+          (header->segment_count * header->segment_size * sizeof (node)))
     goto fail2;
-  /* configure the destructor */
+  /* init the database */
   db->destructor = _free_mounted_db;
   db->mmap_ctx = mmap_ctx;
+  db->header = header;
   /* initialize data array */
-  db->data = (node**) calloc(db->header.segment_count, sizeof (node*));
+  db->data = (node**) calloc(header->segment_count, sizeof (node*));
+  if (!db->data)
+    goto fail2;
   /* link data segments */
-  for (int i = 0; i < db->header.segment_count; ++i)
+  for (i = 0; i < header->segment_count; ++i)
   {
     db->data[i] = (node*) addr;
-    addr += db->header.segment_size * sizeof (node);
+    addr += header->segment_size * sizeof (node);
   }
   /* register the mounted db */
   _register_mounted(filepath, db);
