@@ -42,7 +42,6 @@ static const char * getCmdOption(char **begin, char **end, const std::string& op
 static void readInStream();
 
 static DB * g_db = nullptr;
-static bool g_rw = false;
 
 /*
  * the main function
@@ -124,39 +123,42 @@ static bool parseCommand(const std::string& line)
     else if (token == "HELP")
     {
       PRINT("EXIT                          Exit from CLI\n");
-      PRINT("CREATEDB [seg_size=256]       Create new database\n");
-      PRINT("STAT                          Show statistics of the database\n");
+      PRINT("CREATE {1} [2]                Create new database\n");
+      PRINT("  {1}: file path (no space)\n");
+      PRINT("  [2]: segment size (default 512)\n");
+      PRINT("SETNAME {name}                Rename the database (no space)\n");
+      PRINT("MOUNT {1}                     Mount database from binary db file\n");
+      PRINT("  {1}: file path (no space)\n");
+      PRINT("STATUS                        Show statistics of the database\n");
       PRINT("INSERT {CIDR}                 Add new record CIDR (n.n.n.n/n)\n");
       PRINT("TEST {CIDR}                   Test CIDR matching (n.n.n.n/n)\n");
-      PRINT("LOAD {file path}              Fill database with content of CIDR file\n");
-      PRINT("SAVEDB {file path}            Write database to binary db file\n");
-      PRINT("MOUNTDB {file path}           Mount database from binary db file\n");
+      PRINT("LOAD {1}                      Fill database with content of CIDR file\n");
+      PRINT("  {1}: file path (no space)\n");
       PRINT("HELP                          Print this help\n");
       PRINT("\n");
     }
-    else if (token == "CREATEDB")
+    else if (token == "CREATE")
     {
-      uint16_t sz = 0x100;
+      uint16_t sz = 0;
+      std::string filepath;
+      if (++it != tokens.end())
+        filepath.assign(*it);
       if (++it != tokens.end())
         sscanf((*it).c_str(), "%hd", &sz);
       if (g_db)
         close_db(&g_db);
-      g_rw = true;
-      g_db = create_db(sz);
+      g_db = create_db(filepath.c_str(), "noname", sz);
       if (g_db)
         PERROR("Succeeded\n");
       else
         PERROR("Failed\n");
     }
-    else if (token == "STAT")
+    else if (token == "SETNAME")
     {
-      if (g_db)
-      {
-        stat_db(g_db);
-        PERROR("Succeeded\n");
-      }
+      if (++it != tokens.end() && g_db)
+        rename_db(g_db, it->c_str());
     }
-    else if (token == "STAT")
+    else if (token == "STATUS")
     {
       if (g_db)
         stat_db(g_db);
@@ -185,69 +187,46 @@ static bool parseCommand(const std::string& line)
     {
       if (++it != tokens.end() && g_db)
       {
-        if (g_rw)
+        std::string param(*it);
+        cidr_address cidr;
+        if (create_cidr_address(&cidr, param.c_str()) == 0)
         {
-          std::string param(*it);
-          cidr_address cidr;
-          if (create_cidr_address(&cidr, param.c_str()) == 0)
-          {
-            double t0 = timestamp();
-            int r = create_record(g_db, &cidr);
-            double d = timestamp() - t0;
-            if (r == 0)
-              PRINT("Entry already exists\n");
-            else if (r == 1)
-              PRINT1("Inserted, elap: %f sec\n", d);
-            else
-              PERROR1("Internal error (%d)\n", r);
-          }
+          double t0 = timestamp();
+          int r = create_record(g_db, &cidr);
+          double d = timestamp() - t0;
+          if (r == 0)
+            PRINT("Entry already exists\n");
+          else if (r == 1)
+            PRINT1("Inserted, elap: %f sec\n", d);
           else
-            PERROR("Invalid argument\n");
+            PERROR1("Internal error (%d)\n", r);
         }
         else
-          PERROR("Mounted database is READ-ONLY\n");
+          PERROR("Invalid argument\n");
       }
     }
     else if (token == "LOAD")
     {
       if (++it != tokens.end() && g_db)
       {
-        if (g_rw)
-        {
-          std::string param(*it);
-          double t0 = timestamp();
-          int r = fill_database_from_text(g_db, param.c_str());
-          double d = timestamp() - t0;
-          if (r == 0)
-            PRINT1("Loaded, elap: %f sec\n", d);
-          else
-            PERROR1("Error (%d)\n", r);
-        }
-        else
-          PERROR("Mounted database is READ-ONLY\n");
-      }
-    }
-    else if (token == "SAVEDB")
-    {
-      if (++it != tokens.end() && g_db)
-      {
         std::string param(*it);
-        int r = write_db_file(g_db, param.c_str());
+        double t0 = timestamp();
+        int r = fill_database_from_text(g_db, param.c_str());
+        double d = timestamp() - t0;
         if (r == 0)
-          PRINT("Saved\n");
+          PRINT1("Loaded, elap: %f sec\n", d);
         else
           PERROR1("Error (%d)\n", r);
       }
     }
-    else if (token == "MOUNTDB")
+    else if (token == "MOUNT")
     {
       if (++it != tokens.end())
       {
         std::string param(*it);
         if (g_db)
           close_db(&g_db);
-        g_rw = false;
-        g_db = mount_db(param.c_str());
+        g_db = mount_db(param.c_str(), 1);
         if (g_db)
           PRINT("Mounted\n");
         else
@@ -264,7 +243,7 @@ static bool parseCommand(const std::string& line)
 
 static void prompt() {
   if (g_db)
-    PRINT("DB >>> ");
+    PRINT1("%s >>> ", db_name(g_db));
   else
     PRINT(">>> ");
   FLUSHOUT();

@@ -23,21 +23,30 @@
 #include <memory.h>
 #include <stdio.h>
 #include <errno.h>
+#include <time.h>
+#include <unistd.h>
 #include <sys/mman.h>
 #include <sys/stat.h>
 
 #define DBTAG_LEN 4
-static const char * g_dbtag = "IPF2";
+static const char * g_dbtag = "IPF3";
 static const int g_indianness = 0xff000000;
 
-#define SEGS 0x200      /* base of segment size */
+#define SEGS 0x100      /* base of segment size */
 #define LEAF 0x80000000 /* bit 31 */
 #define ADDR 0x7fffffff /* bit 30-0 */
 
 typedef struct
 {
-  uint16_t  segment_count;  /* nb extents */
-  uint16_t  segment_size;   /* segment size */
+  char      tag[4];
+  uint32_t  indianness;
+  uint32_t  max_file_size;
+  char      db_name[32];
+  int64_t   created;
+  int64_t   updated;
+
+  uint16_t  seg_nb;         /* nb extents */
+  uint16_t  seg_sz;         /* segment size */
   uint32_t  free_node;      /* front of freelist (node id) */
   uint32_t  root_node;      /* node id of the root */
 } db_header;
@@ -51,15 +60,24 @@ typedef struct
 typedef struct
 {
   void *    addr;
-  size_t    bytes;
+  size_t    reserved_size;
+  size_t    allocated_size;
+  FILE *    file;
+  int       flag_rw;
 } mmap_ctx;
 
 struct DB
 {
   db_header * header;
-  node **   data;
+  node *      data;
   void (*destructor)(DB*);
-  mmap_ctx mmap_ctx;
+  mmap_ctx    mmap_ctx;
+
+  struct
+  {
+    uint16_t seg_nb;
+    uint16_t seg_sz;
+  } cache;
 };
 
 typedef struct mounted mounted;
@@ -150,48 +168,103 @@ static int _release_mounted(DB * db)
   return 0;
 }
 
+static void * _mmap_reserve(uint32_t size)
+{
+  void * addr;
+  addr = mmap(NULL, size, PROT_NONE, MAP_ANONYMOUS|MAP_PRIVATE, -1, 0);
+  if (addr == MAP_FAILED)
+    return NULL;
+  return addr;
+}
+
+static int _mmap_database(mmap_ctx * ctx)
+{
+  void * addr;
+  struct stat sb;
+  int prot, fd;
+
+  /* check context */
+  if (!ctx->file || !ctx->addr)
+    return -(EINVAL);
+  /* stat for size to allocate */
+  fd = fileno(ctx->file);
+  if (fstat(fd, &sb) == -1)
+    return -(EIO);
+  /* check reserved address space */
+  if (sb.st_size > (off_t) ctx->reserved_size)
+    return -(ERANGE);
+
+  prot = PROT_READ;
+  if (ctx->flag_rw)
+    prot |= PROT_WRITE;
+
+  addr = mmap(ctx->addr, sb.st_size, prot, MAP_FIXED|MAP_SHARED, fd, 0);
+  if (addr == MAP_FAILED)
+    return -(ENOMEM);
+  /* mmap succeeded */
+  ctx->allocated_size = sb.st_size;
+  return 0;
+}
+
+static void _free_mounted_db(DB * db)
+{
+  if (_release_mounted(db) == 0)
+  {
+    munmap(db->mmap_ctx.addr, db->mmap_ctx.reserved_size);
+    fclose(db->mmap_ctx.file);
+    free(db);
+  }
+}
+
 static int add_segment(DB * db)
 {
   int grow = 1;
-  uint16_t osz;
-  node ** new;
+  node * seg;
+  size_t _allocated_size;
+  uint16_t cur_seg_nb;
   db_header * header = db->header;
 
   /* freelist exists ? */
   if (header->free_node != 0)
     return 0;
-  /* grow the segment array */
-  osz = header->segment_count;
-  if ((ADDR - grow) < osz)
+
+  /* can extend again ? */
+  cur_seg_nb = header->seg_nb;
+  if ((ADDR - grow) < cur_seg_nb)
     return -(ERANGE);
-  if (osz == 0)
-    new = (node**) calloc(grow, sizeof (node*));
-  else
-    new = (node**) realloc(db->data, sizeof (node*) * (osz + grow));
-  if (!new)
+
+  /* now resize the database as needed */
+  _allocated_size = sizeof(db_header) +
+          (cur_seg_nb + grow) * db->cache.seg_sz * sizeof(node);
+  if (ftruncate(fileno(db->mmap_ctx.file), _allocated_size) != 0)
+    return -(EIO);
+
+  /* map over and update the cache */
+  if (_mmap_database(&(db->mmap_ctx)) < 0)
     return -(ENOMEM);
-  db->data = new;
-  /* initialize new segment(s) */
+  db->cache.seg_nb += grow;
+
+  /* new allocated space start at end */
+  seg = db->data + (cur_seg_nb * db->cache.seg_sz);
+  /* initialize free space */
   while (0 < grow--)
   {
+    /* node id start from 1 */
+    uint32_t newid = (cur_seg_nb << 16) + 1;
+    node * _node = seg;
     int n;
-    node * _node;
-    node * seg = (node*) calloc(header->segment_size, sizeof (node));
-
-    if (!seg)
-      return -(ENOMEM);
     /* chain all members on front of the freelist */
-    _node = seg;
-    for (n = 1; n < header->segment_size; ++n)
+    for (n = 1; n < db->cache.seg_sz; ++n)
     {
-      _node->raw0 = (osz << 16) + n + 1; /* ids start from 1 */
-      _node++;
+      _node->raw0 = newid + n;
+      ++_node;
     }
     /* attach the segment and update freelist front */
-    db->data[osz] = seg;
     _node->raw0 = header->free_node;
-    header->free_node = (osz << 16) + 1; /* ids start from 1 */
-    header->segment_count = ++osz;
+    header->free_node = newid;
+    header->seg_nb = ++cur_seg_nb;
+    /* move to next segment */
+    seg += db->cache.seg_sz;
   }
   return 1;
 }
@@ -200,9 +273,18 @@ static node * get_node(DB * db, uint32_t node_id)
 {
   if (node_id != 0)
   {
-    uint32_t segment = (node_id >> 16) & 0x7fff;
-    uint32_t nodenum = (node_id & 0xffff);
-    return &(db->data[segment][nodenum - 1]); /* ids start from 1 */
+    uint16_t seg_no = (node_id >> 16) & 0x7fff;
+    uint16_t pos_no = node_id & 0xffff;
+    if (seg_no >= db->cache.seg_nb)
+    {
+      /* it is a corruption else the database has been extended */
+      if (seg_no >= db->header->seg_nb ||
+              _mmap_database(&(db->mmap_ctx)) < 0)
+        return NULL;
+      /* refresh cache */
+      db->cache.seg_nb = db->header->seg_nb;
+    }
+    return &(db->data[seg_no * db->cache.seg_sz + pos_no - 1]); /* ids start from 1 */
   }
   /* return the root node */
   return get_node(db, db->header->root_node);
@@ -211,7 +293,7 @@ static node * get_node(DB * db, uint32_t node_id)
 static node * new_node(DB * db, uint32_t * node_id)
 {
   db_header * header = db->header;
-  
+
   /* get node from freelist */
   if (header->free_node)
   {
@@ -226,68 +308,102 @@ static node * new_node(DB * db, uint32_t * node_id)
   return NULL;
 }
 
-static void _free_db(DB * db)
-{
-  /* free data */
-  if (db->data)
-  {
-    int s;
-    for (s = 0; s < db->header->segment_count; ++s)
-    {
-      free(db->data[s]);
-    }
-    free(db->data);
-  }
-  /* free header */
-  if (db->header)
-    free(db->header);
-  /* free db skeleton */
-  free(db);
-}
-
 const char * db_format()
 {
   return g_dbtag;
 }
 
-DB * create_db(unsigned seg_size)
+const char * db_name(DB *db)
 {
-  db_header * header;
-  uint16_t n = (seg_size & 0xffff) / SEGS;
-  DB * db = (DB*) malloc(sizeof (DB));
-  if (!db)
-    return NULL;
-  memset(db, '\0', sizeof (DB));
-  header = (db_header*) malloc(sizeof (db_header));
-  if (!header)
+  return db->header->db_name;
+}
+
+void rename_db(DB *db, const char * name)
+{
+  strncpy(db->header->db_name, name, 30);
+}
+
+static size_t _max_db_file_size(uint16_t seg_size)
+{
+  return ((ADDR >> 16) * seg_size * sizeof(node)) + sizeof (db_header);
+}
+
+DB * create_db(const char * filepath, const char * db_name, unsigned seg_size)
+{
+  struct stat filestat;
+  db_header * tmp;
+  DB * db;
+  uint16_t ss;
+  FILE * file;
+
+  /* check file exists */
+  if (stat(filepath, &filestat) == 0)
   {
-    _free_db(db);
+    printf("ERROR: The file '%s' already exists\n", filepath);
     return NULL;
   }
-  header->segment_count = 0;
-  header->segment_size = (n == 0 ? SEGS : n * SEGS);
-  header->free_node = 0;
-  db->header = header;
-  db->destructor = _free_db;
+
+  /* setup the segment size
+   * max is fixed to 32768 nodes per segment */
+  if ((ss = ((seg_size & 0xffff) / SEGS) * SEGS) < SEGS)
+    ss = SEGS;
+  else if (ss > 0x8000)
+    ss = 0x8000;
+
+  /* initialize the header */
+  tmp = (db_header*) malloc(sizeof (db_header));
+  if (!tmp)
+    return NULL;
+  memset(tmp, '\0', sizeof(db_header));
+  memcpy(tmp->tag, g_dbtag, DBTAG_LEN);
+  tmp->indianness = g_indianness;
+  tmp->max_file_size = _max_db_file_size(ss);
+  strncpy(tmp->db_name, db_name, 30);
+  tmp->created = time(NULL);
+  tmp->updated = tmp->created;
+  tmp->seg_nb = 0;
+  tmp->seg_sz = ss;
+  tmp->free_node = 0;
+
+  file = fopen(filepath, "wb");
+  if (!file)
+    goto fail0;
+  if (fwrite(tmp, sizeof(db_header), 1, file) != 1)
+    goto fail1;
+
+  fclose(file);
+  free(tmp);
+
+  db = mount_db(filepath, 1);
+  if (!db)
+    return NULL;
+
   if (add_segment(db) != 1)
   {
-    _free_db(db);
+    close_db(&db);
     return NULL;
   }
   new_node(db, &(db->header->root_node));
   return db;
+fail1:
+  fclose(file);
+fail0:
+  free(tmp);
+  return NULL;
 }
 
 void stat_db(DB * db)
 {
   db_header * header = db->header;
-  printf("%s: segcnt=%u segsz=%u freelist=%08x rootnode=%08x totsz=%lu\n",
-         __FUNCTION__,
-         (unsigned) header->segment_count,
-         (unsigned) header->segment_size,
-         header->free_node,
-         header->root_node,
-         header->segment_count * header->segment_size * sizeof (node));
+  printf("db_name     : %s\n", header->db_name);
+  printf("created on  : %ld\n", header->created);
+  printf("updated on  : %ld\n", header->updated);
+  printf("db_cur_size : %u\n", (unsigned) db->mmap_ctx.allocated_size);
+  printf("db_max_size : %u\n", (unsigned) db->mmap_ctx.reserved_size);
+  printf("seg_size    : %u\n", (unsigned) header->seg_sz);
+  printf("seg_count   : %u\n", (unsigned) header->seg_nb);
+  printf("freelist    : %08x\n", header->free_node);
+  printf("rootnode    : %08x\n", header->root_node);
 }
 
 void close_db(DB ** db)
@@ -296,7 +412,7 @@ void close_db(DB ** db)
   *db = NULL;
 }
 
-int create_record(DB * db, cidr_address * adr)
+static int _create_record(DB * db, cidr_address * adr)
 {
   node * n = get_node(db, 0);
   int b, v = 0, ln = adr->prefix - 1;
@@ -307,6 +423,11 @@ int create_record(DB * db, cidr_address * adr)
     int d = 7 - b + (c << 3);
     v = (adr->addr[c] >> d) & 0x1;
     //printf("%d ", v);
+
+    /* corruption or failure */
+    if (!n)
+      return (-1);
+
     if (v == 0)
     {
       /* left branch */
@@ -332,13 +453,26 @@ int create_record(DB * db, cidr_address * adr)
         n = get_node(db, n->raw1);
     }
   }
-  // flag last node
+
+  /* corruption or failure */
+  if (!n)
+    return (-1);
+
+  /* flag last node */
   if (v == 0)
     n->raw0 |= LEAF;
   else
     n->raw1 |= LEAF;
   //printf("n %p = %d , %d\n", n, (n->raw0 & LEAF) >> 31, (n->raw1 & LEAF) >> 31);
   return 1;
+}
+
+int create_record(DB * db, cidr_address * adr)
+{
+  int r = _create_record(db, adr);
+  if (r > 0)
+    db->header->updated = time(NULL);
+  return r;
 }
 
 int find_record(DB * db, cidr_address * adr)
@@ -350,6 +484,11 @@ int find_record(DB * db, cidr_address * adr)
   {
     int c = b >> 3;
     int p = 7 - b + (c << 3);
+
+    /* corruption or failure */
+    if (!n)
+      return (-1);
+
     v = (adr->addr[c] >> p) & 0x1;
     if (v == 0)
     {
@@ -373,72 +512,29 @@ int find_record(DB * db, cidr_address * adr)
   return 0;
 }
 
-int write_db_file(DB * db, const char * filepath)
+static int _read_db_header(db_header * header, FILE * file)
 {
-  int i;
-  db_header * header = db->header;
-  FILE * file = fopen(filepath, "wb+");
-
-  if (!file)
-    return -(ENOENT);
-  /* write tag */
-  if (fwrite(g_dbtag, DBTAG_LEN, 1, file) != 1)
-    goto fail;
-  /* write indianess check */
-  if (fwrite(&g_indianness, sizeof (int), 1, file) != 1)
-    goto fail;
-  /* write header */
-  if (fwrite(header, sizeof (db_header), 1, file) != 1)
-    goto fail;
-  /* write data */
-  for (i = 0; i < header->segment_count; ++i)
-  {
-    if (fwrite(db->data[i], sizeof (node), header->segment_size, file)
-            != header->segment_size)
-      goto fail;
-  }
-  fclose(file);
+  char * addr;
+  rewind(file);
+  if (fread(header, sizeof(db_header), 1, file) != 1)
+    return -(EIO);
+  addr = (char*) header;
+  /* check tag */
+  if (memcmp(addr, g_dbtag, DBTAG_LEN) != 0)
+    return -(EINVAL);
+  addr += DBTAG_LEN;
+  /* check endianness */
+  if (memcmp(addr, &g_indianness, sizeof (uint32_t)) != 0)
+    return -(EINVAL);
   return 0;
-fail:
-  fclose(file);
-  return -(EIO);
 }
 
-static void * mmap_database(int fd, size_t * bytes)
+DB * mount_db(const char * filepath, int rw)
 {
-  void * addr;
-  struct stat sb;
-  /* file size */
-  if (fstat(fd, &sb) == -1)
-    return NULL;
-  addr = mmap(NULL, sb.st_size, PROT_READ, MAP_PRIVATE, fd, 0);
-  if (addr == MAP_FAILED)
-    return NULL;
-  /* mmap succeeded */
-  *bytes = sb.st_size;
-  return addr;
-}
-
-static void _free_mounted_db(DB * db)
-{
-  if (_release_mounted(db) == 0)
-  {
-    munmap(db->mmap_ctx.addr, db->mmap_ctx.bytes);
-    if (db->data)
-      free(db->data);
-    free(db);
-  }
-}
-
-#define DBFILE_HEADER_SZ (DBTAG_LEN + sizeof(int) + sizeof(db_header))
-
-DB * mount_db(const char * filepath)
-{
-  int i;
   mmap_ctx mmap_ctx;
   char * addr;
   DB * db;
-  db_header * header;
+  db_header * file_header;
   FILE * file;
 
   /* return the already mounted db */
@@ -446,55 +542,61 @@ DB * mount_db(const char * filepath)
     return db;
 
   /* mount the db */
-  if (!(file = fopen(filepath, "rb")))
+  if (rw)
+    file = fopen(filepath, "rb+");
+  else
+    file = fopen(filepath, "rb");
+  if (!file)
     return NULL;
-  mmap_ctx.addr = mmap_database(fileno(file), &mmap_ctx.bytes);
-  if (!mmap_ctx.addr)
+
+  file_header = (db_header*) malloc(sizeof(db_header));
+  if (!file_header)
     goto fail0;
-  /* check mmap size for the header */
-  if (mmap_ctx.bytes < DBFILE_HEADER_SZ)
+  if (_read_db_header(file_header, file) < 0)
     goto fail1;
-  /* check tag */
+
+  /* reserve the whole size */
+  mmap_ctx.reserved_size = file_header->max_file_size;
+  mmap_ctx.addr = _mmap_reserve(mmap_ctx.reserved_size);
+  if (!mmap_ctx.addr)
+    goto fail1;
+
+  /* load the database */
+  mmap_ctx.flag_rw = rw;
+  mmap_ctx.file = file;
+  if (_mmap_database(&mmap_ctx) < 0)
+    goto fail2;
+
+  /* allocated size cannot be less than stated from file header */
+  if (mmap_ctx.allocated_size < sizeof(db_header) +
+          (file_header->seg_nb * file_header->seg_sz * sizeof (node)))
+    goto fail3;
+
   addr = (char*) mmap_ctx.addr;
-  if (memcmp(addr, g_dbtag, DBTAG_LEN) != 0)
-    goto fail1;
-  addr += DBTAG_LEN;
-  /* check endianness */
-  if (memcmp(addr, &g_indianness, sizeof (int)) != 0)
-    goto fail1;
-  addr += sizeof (int);
-  /* initialize database */
+
   db = (DB*) malloc(sizeof (DB));
   if (!db)
-    goto fail1;
-  header = (db_header*) addr;
-  addr += sizeof (db_header);
-  /* check mmap size for the rest */
-  if (mmap_ctx.bytes < DBFILE_HEADER_SZ +
-          (header->segment_count * header->segment_size * sizeof (node)))
     goto fail2;
+  /* keep in cache the older known state, therefore from file header */
+  db->cache.seg_nb = file_header->seg_nb;
+  db->cache.seg_sz = file_header->seg_sz;
+  free(file_header);
+
   /* init the database */
+  db->header = (db_header*) addr;
   db->destructor = _free_mounted_db;
   db->mmap_ctx = mmap_ctx;
-  db->header = header;
-  /* initialize data array */
-  db->data = (node**) calloc(header->segment_count, sizeof (node*));
-  if (!db->data)
-    goto fail2;
-  /* link data segments */
-  for (i = 0; i < header->segment_count; ++i)
-  {
-    db->data[i] = (node*) addr;
-    addr += header->segment_size * sizeof (node);
-  }
+  db->data = (node *) (addr + sizeof (db_header));
+
   /* register the mounted db */
   _register_mounted(filepath, db);
-  fclose(file);
   return db;
-fail2:
+fail3:
   free(db);
+fail2:
+  munmap(mmap_ctx.addr, mmap_ctx.reserved_size);
 fail1:
-  munmap(mmap_ctx.addr, mmap_ctx.bytes);
+  free(file_header);
 fail0:
   fclose(file);
   return NULL;
@@ -547,7 +649,7 @@ int fill_database_from_text(DB * db, const char * filepath)
 {
   FILE* file = fopen(filepath, "r");
   char buf[256];
-  unsigned r = 0, l = 0;
+  unsigned r = 0, l = 0, c = 0;
   if (!file)
     return -(ENOENT);
   while ((r = _readln(buf, sizeof (buf) - 1, file)))
@@ -571,12 +673,16 @@ int fill_database_from_text(DB * db, const char * filepath)
     cidr_address adr;
     if (create_cidr_address(&adr, buf) < 0)
       break;
-    create_record(db, &adr);
+    if (_create_record(db, &adr) < 0)
+      break;
+    ++c;
   }
   fclose(file);
+  if (c > 0)
+    db->header->updated = time(NULL);
   if (r == 0)
     return 0;
   buf[r] = '\0';
-  printf("ERROR: Invalid value '%s' at line %d.\n", buf, l);
+  printf("ERROR: Insertion failed on '%s' at line %d.\n", buf, l);
   return -(EINVAL);
 }

@@ -40,15 +40,25 @@ ngx_http_ipfilter_data_parse(ngx_http_request_ctx_t* ctx, ngx_http_request_t* r)
     if (create_cidr_address_2(&cidr, buf, 32) != 0)
     {
       ngx_log_error(NGX_LOG_WARN, r->connection->log, 0,
-                    IPFILTER_TAG " unable to parse address '%V'.",
+                    IPFILTER_TAG " Unable to parse address '%V'.",
                     r->connection->addr_text);
       ctx->block = 1;
       return;
     }
-    if (find_record(cf->db_instance, &cidr))
-      ctx->block = cf->rule_deny;
-    else
+    switch (find_record(cf->db_instance, &cidr))
+    {
+    case 0:
       ctx->block = (cf->rule_deny ? 0 : 1);
+      break;
+    case 1:
+      ctx->block = cf->rule_deny;
+      break;
+    default:
+      ctx->block = 1;
+      ngx_log_error(NGX_LOG_EMERG, r->connection->log, 0,
+                    IPFILTER_TAG " Database query failed (%d)(%V).",
+                    errno, r->connection->addr_text);
+    }
   }
 }
 

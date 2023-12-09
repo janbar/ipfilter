@@ -181,7 +181,8 @@ ngx_http_ipfilter_init(ngx_conf_t* cf)
     if (!loc_cf[i]->enabled)
       continue;
 
-    DB* db = mount_db((char*) loc_cf[i]->db_file->data);
+    /* mount db in read-only mode */
+    DB* db = mount_db((char*) loc_cf[i]->db_file->data, 0);
     if (!db)
     {
       ngx_conf_log_error(NGX_LOG_EMERG, cf, 0,
