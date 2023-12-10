@@ -70,10 +70,12 @@ typedef struct
   } while (0)
 
 void
-ngx_http_ipfilter_data_parse(ngx_http_request_ctx_t* ctx, ngx_http_request_t* r);
+ngx_http_ipfilter_data_parse(ngx_http_request_ctx_t* ctx,
+        ngx_http_request_t* r, ngx_http_ipfilter_loc_conf_t* cf);
 
 ngx_int_t
-ngx_http_output_forbidden_page(ngx_http_request_ctx_t* ctx, ngx_http_request_t* r);
+ngx_http_output_forbidden_page(ngx_http_request_ctx_t* ctx,
+        ngx_http_request_t* r, ngx_http_ipfilter_loc_conf_t* cf);
 
 #endif /* NGX_MODULE_IPFILTER_H */
 

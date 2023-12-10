@@ -140,12 +140,12 @@ ngx_http_ipfilter_init(ngx_conf_t* cf)
   cmcf = ngx_http_conf_get_module_main_conf(cf, ngx_http_core_module);
   main_cf = ngx_http_conf_get_module_main_conf(cf, ngx_http_ipfilter_module);
   if (cmcf == NULL || main_cf == NULL)
-    return (NGX_ERROR); /*LCOV_EXCL_LINE*/
+    return (NGX_ERROR);
 
   /* Register for rewrite phase */
   h = ngx_array_push(&cmcf->phases[NGX_HTTP_REWRITE_PHASE].handlers);
   if (h == NULL)
-    return (NGX_ERROR); /*LCOV_EXCL_LINE*/
+    return (NGX_ERROR);
 
   *h = ngx_http_ipfilter_access_handler;
   /* Go with each locations registered in the srv_conf. */
@@ -158,20 +158,16 @@ ngx_http_ipfilter_init(ngx_conf_t* cf)
 
       if (!loc_cf[i]->denied_url || loc_cf[i]->denied_url->len <= 0)
       {
-        /* LCOV_EXCL_START */
         ngx_conf_log_error(NGX_LOG_EMERG, cf, 0,
-                           IPFILTER_TAG " Missing directive '" TOP_DENIED_URL_N "', abort.");
+                           IPFILTER_TAG " Missing directive '" TOP_DENIED_URL_N "', abort");
         return (NGX_ERROR);
-        /* LCOV_EXCL_STOP */
       }
 
       if (!loc_cf[i]->db_file || loc_cf[i]->db_file->len <= 0)
       {
-        /* LCOV_EXCL_START */
         ngx_conf_log_error(NGX_LOG_EMERG, cf, 0,
-                           IPFILTER_TAG " Missing directive '" TOP_DBFILE_N "', abort.");
+                           IPFILTER_TAG " Missing directive '" TOP_DBFILE_N "', abort");
         return (NGX_ERROR);
-        /* LCOV_EXCL_STOP */
       }
     }
   }
@@ -186,10 +182,9 @@ ngx_http_ipfilter_init(ngx_conf_t* cf)
     if (!db)
     {
       ngx_conf_log_error(NGX_LOG_EMERG, cf, 0,
-                         IPFILTER_TAG " Failed to mount database '%V'. abort.",
+                         IPFILTER_TAG " Failed to mount database '%V', abort",
                          loc_cf[i]->db_file);
       return (NGX_ERROR);
-      /* LCOV_EXCL_STOP */
     }
     loc_cf[i]->db_instance = db;
   }
@@ -212,7 +207,7 @@ ngx_http_ipfilter_flags_loc_conf(ngx_conf_t* cf, ngx_command_t* cmd, void* conf)
   {
     bar = ngx_array_push(main_cf->locations);
     if (!bar)
-      return (NGX_CONF_ERROR); /* LCOV_EXCL_LINE */
+      return (NGX_CONF_ERROR);
     *bar = alcf;
     alcf->pushed = 1;
   }
@@ -234,14 +229,14 @@ ngx_http_ipfilter_du_loc_conf(ngx_conf_t* cf, ngx_command_t* cmd, void* conf)
   ngx_str_t* value;
 
   if (!alcf || !cf)
-    return (NGX_CONF_ERROR); /* LCOV_EXCL_LINE */
+    return (NGX_CONF_ERROR);
 
   main_cf = ngx_http_conf_get_module_main_conf(cf, ngx_http_ipfilter_module);
   if (!alcf->pushed)
   {
     bar = ngx_array_push(main_cf->locations);
     if (!bar)
-      return (NGX_CONF_ERROR); /* LCOV_EXCL_LINE */
+      return (NGX_CONF_ERROR);
     *bar = alcf;
     alcf->pushed = 1;
   }
@@ -255,10 +250,10 @@ ngx_http_ipfilter_du_loc_conf(ngx_conf_t* cf, ngx_command_t* cmd, void* conf)
   {
     alcf->denied_url = ngx_pcalloc(cf->pool, sizeof (ngx_str_t));
     if (!alcf->denied_url)
-      return (NGX_CONF_ERROR); /* LCOV_EXCL_LINE */
+      return (NGX_CONF_ERROR);
     alcf->denied_url->data = ngx_pcalloc(cf->pool, value[1].len + 1);
     if (!alcf->denied_url->data)
-      return (NGX_CONF_ERROR); /* LCOV_EXCL_LINE */
+      return (NGX_CONF_ERROR);
     memcpy(alcf->denied_url->data, value[1].data, value[1].len);
     alcf->denied_url->len = value[1].len;
     return (NGX_CONF_OK);
@@ -275,14 +270,14 @@ ngx_http_ipfilter_ru_loc_conf(ngx_conf_t* cf, ngx_command_t* cmd, void* conf)
   ngx_str_t* value;
 
   if (!alcf || !cf)
-    return (NGX_CONF_ERROR); /* LCOV_EXCL_LINE */
+    return (NGX_CONF_ERROR);
 
   main_cf = ngx_http_conf_get_module_main_conf(cf, ngx_http_ipfilter_module);
   if (!alcf->pushed)
   {
     bar = ngx_array_push(main_cf->locations);
     if (!bar)
-      return (NGX_CONF_ERROR); /* LCOV_EXCL_LINE */
+      return (NGX_CONF_ERROR);
     *bar = alcf;
     alcf->pushed = 1;
   }
@@ -313,14 +308,14 @@ ngx_http_ipfilter_db_loc_conf(ngx_conf_t* cf, ngx_command_t* cmd, void* conf)
   ngx_str_t* value;
 
   if (!alcf || !cf)
-    return (NGX_CONF_ERROR); /* LCOV_EXCL_LINE */
+    return (NGX_CONF_ERROR);
 
   main_cf = ngx_http_conf_get_module_main_conf(cf, ngx_http_ipfilter_module);
   if (!alcf->pushed)
   {
     bar = ngx_array_push(main_cf->locations);
     if (!bar)
-      return (NGX_CONF_ERROR); /* LCOV_EXCL_LINE */
+      return (NGX_CONF_ERROR);
     *bar = alcf;
     alcf->pushed = 1;
   }
@@ -334,10 +329,10 @@ ngx_http_ipfilter_db_loc_conf(ngx_conf_t* cf, ngx_command_t* cmd, void* conf)
   {
     alcf->db_file = ngx_pcalloc(cf->pool, sizeof (ngx_str_t));
     if (!alcf->db_file)
-      return (NGX_CONF_ERROR); /* LCOV_EXCL_LINE */
+      return (NGX_CONF_ERROR);
     alcf->db_file->data = ngx_pcalloc(cf->pool, value[1].len + 1);
     if (!alcf->db_file->data)
-      return (NGX_CONF_ERROR); /* LCOV_EXCL_LINE */
+      return (NGX_CONF_ERROR);
     memcpy(alcf->db_file->data, value[1].data, value[1].len);
     alcf->db_file->len = value[1].len;
     return (NGX_CONF_OK);
@@ -389,10 +384,10 @@ ngx_http_ipfilter_create_main_conf(ngx_conf_t* cf)
 
   mc = ngx_pcalloc(cf->pool, sizeof (ngx_http_ipfilter_main_conf_t));
   if (!mc)
-    return (NGX_CONF_ERROR); /*LCOV_EXCL_LINE*/
+    return (NGX_CONF_ERROR);
   mc->locations = ngx_array_create(cf->pool, DEFAULT_MAX_LOC_T, sizeof (ngx_http_ipfilter_loc_conf_t*));
   if (!mc->locations)
-    return (NGX_CONF_ERROR); /*LCOV_EXCL_LINE*/
+    return (NGX_CONF_ERROR);
   return (mc);
 }
 
@@ -450,7 +445,7 @@ ngx_http_ipfilter_access_handler(ngx_http_request_t* r)
     NX_DEBUG(_debug_mechanics, NGX_LOG_DEBUG_HTTP, r->connection->log, 0,
              IPFILTER_TAG " Failed to get time");
 
-  ngx_http_ipfilter_data_parse(ctx, r);
+  ngx_http_ipfilter_data_parse(ctx, r, cf);
   cf->request_processed++;
 
   if ((end = times(&tmsend)) == (clock_t) - 1)
@@ -472,7 +467,7 @@ ngx_http_ipfilter_access_handler(ngx_http_request_t* r)
     cf->request_blocked++;
     NX_DEBUG(_debug_mechanics, NGX_LOG_DEBUG_HTTP, r->connection->log, 0,
              IPFILTER_TAG " BLOCKED (%l)", cf->request_blocked);
-    rc = ngx_http_output_forbidden_page(ctx, r);
+    rc = ngx_http_output_forbidden_page(ctx, r, cf);
     /* redirect: return (NGX_HTTP_OK) */
     return rc;
   }

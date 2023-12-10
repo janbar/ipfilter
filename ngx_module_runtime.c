@@ -19,10 +19,10 @@
 #include "ngx_module.h"
 
 void
-ngx_http_ipfilter_data_parse(ngx_http_request_ctx_t* ctx, ngx_http_request_t* r)
+ngx_http_ipfilter_data_parse(ngx_http_request_ctx_t* ctx,
+                             ngx_http_request_t* r,
+                             ngx_http_ipfilter_loc_conf_t* cf)
 {
-  ngx_http_ipfilter_loc_conf_t* cf;
-  cf = ngx_http_get_module_loc_conf(r, ngx_http_ipfilter_module);
   if (!cf || !ctx)
   {
     ngx_log_error(NGX_LOG_WARN, r->connection->log, 0,
@@ -64,12 +64,11 @@ ngx_http_ipfilter_data_parse(ngx_http_request_ctx_t* ctx, ngx_http_request_t* r)
 }
 
 ngx_int_t
-ngx_http_output_forbidden_page(ngx_http_request_ctx_t* ctx, ngx_http_request_t* r)
+ngx_http_output_forbidden_page(ngx_http_request_ctx_t* ctx,
+                               ngx_http_request_t* r,
+                               ngx_http_ipfilter_loc_conf_t* cf)
 {
   ngx_str_t empty = ngx_string("");
-  ngx_http_ipfilter_loc_conf_t* cf;
-
-  cf = ngx_http_get_module_loc_conf(r, ngx_http_ipfilter_module);
   ngx_http_internal_redirect(r, cf->denied_url, &empty);
   return (NGX_HTTP_OK);
 }
