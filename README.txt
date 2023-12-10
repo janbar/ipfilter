@@ -33,7 +33,7 @@ update the database as follows:
   DB1 >>> test 8.8.8.8/32
   [not found] elap: 0.000004 sec
 
-  4. exit.
+  4. Quit the CLI.
 
   DB1 >>> exit
 
@@ -82,7 +82,7 @@ Update the database
 
   mount /etc/nginx/modules/database.db
 
-  3. Use insert, delete, load ...
+  3. Use insert, load ... [delete, purge, list : not yet implemented]
 
   insert 10.1.0.0/16
 
