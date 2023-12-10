@@ -26,7 +26,7 @@ extern "C"
 
 /* define IP4 CIDR address */
 #define ADDR_SZ 4
-typedef struct { char addr[ADDR_SZ]; int prefix; } cidr_address;
+typedef struct { unsigned char addr[ADDR_SZ]; int prefix; } cidr_address;
 
 /* define opaque DB struct */
 typedef struct DB DB;
@@ -49,13 +49,13 @@ const char * db_format();
 
 /* Create database with the given segment size (default 256).
  * Argument 'seg_size' defines the number of node per extent. The max count of
- * extent is fixed to 32K. Therefore the given value will define the max size
+ * extent is fixed to 16K. Therefore the given value will define the max size
  * of the database as follows:
  *   bytes_per_node = 8
- *   max_nodes      = 32K * seg_size                : using 256 => 8M
- *   max_db_size    = byte_per_node * max_nodes     : using 256 => 64MB
+ *   max_nodes      = 16K * seg_size                : using 256 => 4M
+ *   max_db_size    = byte_per_node * max_nodes     : using 256 => 32MB
  *
- * The number of nodes is limited to 2B: 32k * 64k
+ * The segment size is limited to 64K.
  */
 DB * create_db(const char * filepath, const char * db_name, unsigned seg_size);
 
@@ -92,7 +92,8 @@ db_response find_record(DB * db, cidr_address * adr);
  */
 int create_cidr_address(cidr_address * cidr, const char * cidr_str);
 
-int create_cidr_address_2(cidr_address * cidr, const char * addr_str, int prefix);
+int create_cidr_address_2(cidr_address * cidr,
+        const char * addr_str, int prefix);
 
 #ifdef __cplusplus
 }

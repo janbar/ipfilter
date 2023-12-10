@@ -647,7 +647,8 @@ int create_cidr_address(cidr_address * cidr, const char * cidr_str)
   return 0;
 }
 
-int create_cidr_address_2(cidr_address * cidr, const char * addr_str, int prefix)
+int create_cidr_address_2(cidr_address * cidr,
+                          const char * addr_str, int prefix)
 {
   if (sscanf(addr_str, "%hhd.%hhd.%hhd.%hhd",
              &(cidr->addr[0]), &(cidr->addr[1]), &(cidr->addr[2]),
