@@ -16,7 +16,7 @@ add_executable(ipfiltercli ${cli_SOURCES})
 
 if(${CMAKE_SYSTEM_NAME} STREQUAL "SunOS")
   find_library(SOCKET socket REQUIRED)
-  target_link_libraries(ipfilter socket)
+  target_link_libraries(ipfiltercli socket)
 endif()
 
 add_custom_target(module_sources SOURCES
