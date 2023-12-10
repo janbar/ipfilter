@@ -48,7 +48,7 @@ const char * db_format();
  *   max_nodes      = 32K * seg_size                : using 256 => 8M
  *   max_db_size    = byte_per_node * max_nodes     : using 256 => 64MB
  *
- * The number of nodes is arbitrarily limited to 1B: 32k*32k
+ * The number of nodes is limited to 2B: 32k * 64k
  */
 DB * create_db(const char * filepath, const char * db_name, unsigned seg_size);
 

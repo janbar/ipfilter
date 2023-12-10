@@ -123,28 +123,28 @@ static bool parseCommand(const std::string& line)
     else if (token == "HELP")
     {
       PRINT("EXIT                          Exit from CLI\n");
-      PRINT("CREATE {1} [2]                Create new database\n");
-      PRINT("  {1}: file path (no space)\n");
-      PRINT("  [2]: segment size (default 512)\n");
-      PRINT("SETNAME {name}                Rename the database (no space)\n");
-      PRINT("MOUNT {1}                     Mount database from binary db file\n");
-      PRINT("  {1}: file path (no space)\n");
+      PRINT("CREATE $1 [$2]                Create new database\n");
+      PRINT("  $1 : file path (no space)\n");
+      PRINT("  $2 : segment size from 256 to 65536. The default is 256.\n");
+      PRINT("SETNAME $name                 Rename the database (no space)\n");
+      PRINT("MOUNT $1                      Mount database from binary db file\n");
+      PRINT("  $1 : file path (no space)\n");
       PRINT("STATUS                        Show statistics of the database\n");
-      PRINT("INSERT {CIDR}                 Add new record CIDR (n.n.n.n/n)\n");
-      PRINT("TEST {CIDR}                   Test CIDR matching (n.n.n.n/n)\n");
-      PRINT("LOAD {1}                      Fill database with content of CIDR file\n");
-      PRINT("  {1}: file path (no space)\n");
+      PRINT("INSERT $CIDR                  Add new record CIDR (n.n.n.n/n)\n");
+      PRINT("TEST $CIDR                    Test CIDR matching (n.n.n.n/n)\n");
+      PRINT("LOAD $1                       Fill database with content of CIDR file\n");
+      PRINT("  $1 : file path (no space)\n");
       PRINT("HELP                          Print this help\n");
       PRINT("\n");
     }
     else if (token == "CREATE")
     {
-      uint16_t sz = 0;
+      unsigned sz = 0;
       std::string filepath;
       if (++it != tokens.end())
         filepath.assign(*it);
       if (++it != tokens.end())
-        sscanf((*it).c_str(), "%hd", &sz);
+        sscanf((*it).c_str(), "%d", &sz);
       if (g_db)
         close_db(&g_db);
       g_db = create_db(filepath.c_str(), "noname", sz);

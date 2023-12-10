@@ -36,6 +36,8 @@ static const int g_indianness = 0xff000000;
 #define LEAF 0x80000000 /* bit 31 */
 #define ADDR 0x7fffffff /* bit 30-0 */
 
+#define SEGMENT_SIZE(m) ((unsigned)(m) + 1)
+
 typedef struct
 {
   char      tag[4];
@@ -46,7 +48,7 @@ typedef struct
   int64_t   updated;
 
   uint16_t  seg_nb;         /* nb extents */
-  uint16_t  seg_sz;         /* segment size */
+  uint16_t  seg_mask;       /* id range mask */
   uint32_t  free_node;      /* front of freelist (node id) */
   uint32_t  root_node;      /* node id of the root */
 } db_header;
@@ -76,7 +78,7 @@ struct DB
   struct
   {
     uint16_t seg_nb;
-    uint16_t seg_sz;
+    unsigned seg_sz;
   } cache;
 };
 
@@ -230,7 +232,7 @@ static int add_segment(DB * db)
 
   /* can extend again ? */
   cur_seg_nb = header->seg_nb;
-  if ((ADDR - grow) < cur_seg_nb)
+  if ((ADDR - (grow << 16)) < (cur_seg_nb << 16))
     return -(ERANGE);
 
   /* now resize the database as needed */
@@ -249,10 +251,10 @@ static int add_segment(DB * db)
   /* initialize free space */
   while (0 < grow--)
   {
-    /* node id start from 1 */
-    uint32_t newid = (cur_seg_nb << 16) + 1;
+    /* seg no start from 1 */
+    uint32_t newid = ((cur_seg_nb + 1) << 16);
     node * _node = seg;
-    int n;
+    unsigned n;
     /* chain all members on front of the freelist */
     for (n = 1; n < db->cache.seg_sz; ++n)
     {
@@ -275,16 +277,17 @@ static node * get_node(DB * db, uint32_t node_id)
   {
     uint16_t seg_no = (node_id >> 16) & 0x7fff;
     uint16_t pos_no = node_id & 0xffff;
-    if (seg_no >= db->cache.seg_nb)
+    if (seg_no > db->cache.seg_nb)
     {
       /* it is a corruption else the database has been extended */
-      if (seg_no >= db->header->seg_nb ||
+      if (seg_no > db->header->seg_nb ||
               _mmap_database(&(db->mmap_ctx)) < 0)
         return NULL;
       /* refresh cache */
       db->cache.seg_nb = db->header->seg_nb;
     }
-    return &(db->data[seg_no * db->cache.seg_sz + pos_no - 1]); /* ids start from 1 */
+    /* seg no start from 1 */
+    return &(db->data[(seg_no - 1) * db->cache.seg_sz + pos_no]);
   }
   /* return the root node */
   return get_node(db, db->header->root_node);
@@ -323,9 +326,9 @@ void rename_db(DB *db, const char * name)
   strncpy(db->header->db_name, name, 30);
 }
 
-static size_t _max_db_file_size(uint16_t seg_size)
+static size_t _max_db_file_size(uint16_t seg_mask)
 {
-  return ((ADDR >> 16) * seg_size * sizeof(node)) + sizeof (db_header);
+  return ((ADDR >> 16) * SEGMENT_SIZE(seg_mask) * sizeof(node)) + sizeof (db_header);
 }
 
 DB * create_db(const char * filepath, const char * db_name, unsigned seg_size)
@@ -333,7 +336,7 @@ DB * create_db(const char * filepath, const char * db_name, unsigned seg_size)
   struct stat filestat;
   db_header * tmp;
   DB * db;
-  uint16_t ss;
+  uint16_t seg_mask;
   FILE * file;
 
   /* check file exists */
@@ -343,12 +346,12 @@ DB * create_db(const char * filepath, const char * db_name, unsigned seg_size)
     return NULL;
   }
 
-  /* setup the segment size
-   * max is fixed to 32768 nodes per segment */
-  if ((ss = ((seg_size & 0xffff) / SEGS) * SEGS) < SEGS)
-    ss = SEGS;
-  else if (ss > 0x8000)
-    ss = 0x8000;
+  /* define the segment size (id range) */
+  {
+    unsigned sz = SEGS;
+    while (seg_size > sz) sz = sz << 1;
+    seg_mask = (sz - 1) & 0xffff;
+  }
 
   /* initialize the header */
   tmp = (db_header*) malloc(sizeof (db_header));
@@ -357,12 +360,12 @@ DB * create_db(const char * filepath, const char * db_name, unsigned seg_size)
   memset(tmp, '\0', sizeof(db_header));
   memcpy(tmp->tag, g_dbtag, DBTAG_LEN);
   tmp->indianness = g_indianness;
-  tmp->max_file_size = _max_db_file_size(ss);
+  tmp->max_file_size = _max_db_file_size(seg_mask);
   strncpy(tmp->db_name, db_name, 30);
   tmp->created = time(NULL);
   tmp->updated = tmp->created;
   tmp->seg_nb = 0;
-  tmp->seg_sz = ss;
+  tmp->seg_mask = seg_mask;
   tmp->free_node = 0;
 
   file = fopen(filepath, "wb");
@@ -400,7 +403,7 @@ void stat_db(DB * db)
   printf("updated on  : %ld\n", header->updated);
   printf("db_cur_size : %u\n", (unsigned) db->mmap_ctx.allocated_size);
   printf("db_max_size : %u\n", (unsigned) db->mmap_ctx.reserved_size);
-  printf("seg_size    : %u\n", (unsigned) header->seg_sz);
+  printf("seg_size    : %u\n", SEGMENT_SIZE(header->seg_mask));
   printf("seg_count   : %u\n", (unsigned) header->seg_nb);
   printf("freelist    : %08x\n", header->free_node);
   printf("rootnode    : %08x\n", header->root_node);
@@ -569,7 +572,7 @@ DB * mount_db(const char * filepath, int rw)
 
   /* allocated size cannot be less than stated from file header */
   if (mmap_ctx.allocated_size < sizeof(db_header) +
-          (file_header->seg_nb * file_header->seg_sz * sizeof (node)))
+          (file_header->seg_nb * SEGMENT_SIZE(file_header->seg_mask) * sizeof (node)))
     goto fail3;
 
   addr = (char*) mmap_ctx.addr;
@@ -579,7 +582,7 @@ DB * mount_db(const char * filepath, int rw)
     goto fail2;
   /* keep in cache the older known state, therefore from file header */
   db->cache.seg_nb = file_header->seg_nb;
-  db->cache.seg_sz = file_header->seg_sz;
+  db->cache.seg_sz = SEGMENT_SIZE(file_header->seg_mask);
   free(file_header);
 
   /* init the database */
