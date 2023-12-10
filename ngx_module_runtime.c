@@ -47,17 +47,18 @@ ngx_http_ipfilter_data_parse(ngx_http_request_ctx_t* ctx, ngx_http_request_t* r)
     }
     switch (find_record(cf->db_instance, &cidr))
     {
-    case 0:
+    case db_not_found:
       ctx->block = (cf->rule_deny ? 0 : 1);
       break;
-    case 1:
+    case db_matched:
       ctx->block = cf->rule_deny;
       break;
-    default:
+    case db_error:
       ctx->block = 1;
       ngx_log_error(NGX_LOG_EMERG, r->connection->log, 0,
                     IPFILTER_TAG " Database query failed (%d)(%V).",
                     errno, r->connection->addr_text);
+      break;
     }
   }
 }

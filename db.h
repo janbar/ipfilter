@@ -31,6 +31,13 @@ typedef struct { char addr[ADDR_SZ]; int prefix; } cidr_address;
 /* define opaque DB struct */
 typedef struct DB DB;
 
+typedef enum
+{
+  db_error      = -1,
+  db_not_found  = 0,
+  db_matched    = 1,
+} db_response;
+
 const char * db_format();
 
 /*
@@ -52,7 +59,7 @@ const char * db_format();
  */
 DB * create_db(const char * filepath, const char * db_name, unsigned seg_size);
 
-int create_record(DB * db, cidr_address * adr);
+db_response create_record(DB * db, cidr_address * adr);
 
 int fill_database_from_text(DB * db, const char * filepath);
 
@@ -78,9 +85,7 @@ void stat_db(DB * db);
 
 void close_db(DB ** db);
 
-int find_record(DB * db, cidr_address * adr);
-
-int write_db_file(DB * db, const char * filepath);
+db_response find_record(DB * db, cidr_address * adr);
 
 /*
  * utilities

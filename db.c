@@ -30,13 +30,20 @@
 
 #define DBTAG_LEN 4
 static const char * g_dbtag = "IPF3";
-static const int g_indianness = 0xff000000;
+static const int g_indianness = 0xFF000000;
 
-#define SEGS 0x100      /* base of segment size */
-#define LEAF 0x80000000 /* bit 31 */
-#define ADDR 0x7fffffff /* bit 30-0 */
+#define SEGS        0x100      /* base of segment size */
+#define ADDR        0x3FFFFFFF /* 30 bits size */
+#define SEG_RANGE   0x3FFF
+#define NOD_RANGE   0xFFFF
 
 #define SEGMENT_SIZE(m) ((unsigned)(m) + 1)
+
+#define LEAF        0xC0000000 /* 2 bits size */
+#define LEAF_1      (db_matched << 30)
+#define LEAF_2      (db_matched << 31) /* reserved */
+
+#define LEAF_VALUE(u)   ((u >> 30) & 0x3)
 
 typedef struct
 {
@@ -275,8 +282,8 @@ static node * get_node(DB * db, uint32_t node_id)
 {
   if (node_id != 0)
   {
-    uint16_t seg_no = (node_id >> 16) & 0x7fff;
-    uint16_t pos_no = node_id & 0xffff;
+    uint16_t seg_no = (node_id >> 16) & SEG_RANGE;
+    uint16_t pos_no = node_id & NOD_RANGE;
     if (seg_no > db->cache.seg_nb)
     {
       /* it is a corruption else the database has been extended */
@@ -350,7 +357,7 @@ DB * create_db(const char * filepath, const char * db_name, unsigned seg_size)
   {
     unsigned sz = SEGS;
     while (seg_size > sz) sz = sz << 1;
-    seg_mask = (sz - 1) & 0xffff;
+    seg_mask = (sz - 1) & NOD_RANGE;
   }
 
   /* initialize the header */
@@ -415,7 +422,7 @@ void close_db(DB ** db)
   *db = NULL;
 }
 
-static int _create_record(DB * db, cidr_address * adr)
+static db_response _create_record(DB * db, cidr_address * adr)
 {
   node * n = get_node(db, 0);
   int b, v = 0, ln = adr->prefix - 1;
@@ -429,13 +436,13 @@ static int _create_record(DB * db, cidr_address * adr)
 
     /* corruption or failure */
     if (!n)
-      return (-1);
+      return db_error;
 
     if (v == 0)
     {
       /* left branch */
       if ((n->raw0 & LEAF))
-        return 0;
+        return db_matched;
       if (b == ln)
         break;
       if (!(n->raw0 & ADDR))
@@ -447,7 +454,7 @@ static int _create_record(DB * db, cidr_address * adr)
     {
       /* right branch */
       if ((n->raw1 & LEAF))
-        return 0;
+        return db_matched;
       if (b == ln)
         break;
       if (!(n->raw1 & ADDR))
@@ -459,26 +466,26 @@ static int _create_record(DB * db, cidr_address * adr)
 
   /* corruption or failure */
   if (!n)
-    return (-1);
+    return db_error;
 
   /* flag last node */
   if (v == 0)
-    n->raw0 |= LEAF;
+    n->raw0 |= LEAF_1;
   else
-    n->raw1 |= LEAF;
-  //printf("n %p = %d , %d\n", n, (n->raw0 & LEAF) >> 31, (n->raw1 & LEAF) >> 31);
-  return 1;
+    n->raw1 |= LEAF_1;
+  //printf("n %p = %d , %d\n", n, LEAF_VALUE(n->raw0), LEAF_VALUE(n->raw1);
+  return db_not_found;
 }
 
-int create_record(DB * db, cidr_address * adr)
+db_response create_record(DB * db, cidr_address * adr)
 {
-  int r = _create_record(db, adr);
-  if (r > 0)
+  db_response r = _create_record(db, adr);
+  if (r == db_not_found)
     db->header->updated = time(NULL);
   return r;
 }
 
-int find_record(DB * db, cidr_address * adr)
+db_response find_record(DB * db, cidr_address * adr)
 {
   node * n = get_node(db, 0);
   int b, v = 0;
@@ -490,29 +497,29 @@ int find_record(DB * db, cidr_address * adr)
 
     /* corruption or failure */
     if (!n)
-      return (-1);
+      return db_error;
 
     v = (adr->addr[c] >> p) & 0x1;
     if (v == 0)
     {
       /* left branch */
       if ((n->raw0 & LEAF))
-        return 1;
+        return db_matched;
       if (!(n->raw0 & ADDR))
-        return 0;
+        return db_not_found;
       n = get_node(db, n->raw0);
     }
     else
     {
       /* right branch */
       if ((n->raw1 & LEAF))
-        return 1;
+        return db_matched;
       if (!(n->raw1 & ADDR))
-        return 0;
+        return db_not_found;
       n = get_node(db, n->raw1);
     }
   }
-  return 0;
+  return db_not_found;
 }
 
 static int _read_db_header(db_header * header, FILE * file)
@@ -676,7 +683,7 @@ int fill_database_from_text(DB * db, const char * filepath)
     cidr_address adr;
     if (create_cidr_address(&adr, buf) < 0)
       break;
-    if (_create_record(db, &adr) < 0)
+    if (_create_record(db, &adr) == db_error)
       break;
     ++c;
   }

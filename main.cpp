@@ -192,11 +192,11 @@ static bool parseCommand(const std::string& line)
         if (create_cidr_address(&cidr, param.c_str()) == 0)
         {
           double t0 = timestamp();
-          int r = create_record(g_db, &cidr);
+          db_response r = create_record(g_db, &cidr);
           double d = timestamp() - t0;
-          if (r == 0)
+          if (r == db_matched)
             PRINT("Entry already exists\n");
-          else if (r == 1)
+          else if (r == db_not_found)
             PRINT1("Inserted, elap: %f sec\n", d);
           else
             PERROR1("Internal error (%d)\n", r);
