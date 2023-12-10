@@ -40,13 +40,6 @@ typedef enum
 
 const char * db_format();
 
-/*
- * In-memory db
- * First the database is empty. It has to be filled with records, and finally
- * it could be written in a static file.
- * The db handle must be closed to free allocated resources (see close_db).
- */
-
 /* Create database with the given segment size (default 256).
  * Argument 'seg_size' defines the number of node per extent. The max count of
  * extent is fixed to 16K. Therefore the given value will define the max size
@@ -55,7 +48,8 @@ const char * db_format();
  *   max_nodes      = 16K * seg_size                : using 256 => 4M
  *   max_db_size    = byte_per_node * max_nodes     : using 256 => 32MB
  *
- * The segment size is limited to 64K.
+ * As max_db_size is reserved in virtual memory, do not increase seg_size
+ * unnecessarily. In most cases the default value (256) is large enough.
  */
 DB * create_db(const char * filepath, const char * db_name, unsigned seg_size);
 
