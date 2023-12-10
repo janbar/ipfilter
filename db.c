@@ -49,7 +49,7 @@ typedef struct
 {
   char      tag[4];
   uint32_t  indianness;
-  uint32_t  max_file_size;
+  uint64_t  max_file_size;
   char      db_name[32];
   int64_t   created;
   int64_t   updated;
@@ -58,6 +58,7 @@ typedef struct
   uint16_t  seg_mask;       /* id range mask */
   uint32_t  free_node;      /* front of freelist (node id) */
   uint32_t  root_node;      /* node id of the root */
+  char      _padding[4];    /* reserved */
 } db_header;
 
 typedef struct
@@ -69,8 +70,8 @@ typedef struct
 typedef struct
 {
   void *    addr;
-  size_t    reserved_size;
-  size_t    allocated_size;
+  size_t    reserved_bytes;   /* rounded up _SC_PAGESIZE */
+  size_t    allocated_bytes;  /* rounded up _SC_PAGESIZE */
   FILE *    file;
   int       flag_rw;
 } mmap_ctx;
@@ -177,12 +178,25 @@ static int _release_mounted(DB * db)
   return 0;
 }
 
-static void * _mmap_reserve(uint32_t size)
+static size_t _mmap_roundup_size(size_t size)
+{
+  size_t _size;
+  size_t page_size = (size_t) sysconf(_SC_PAGESIZE);
+  _size = (size / page_size) * page_size;
+  if (_size < size)
+    _size += page_size;
+  return _size;
+}
+
+static void * _mmap_reserve(size_t * size)
 {
   void * addr;
-  addr = mmap(NULL, size, PROT_NONE, MAP_ANONYMOUS|MAP_PRIVATE, -1, 0);
+  size_t _size = _mmap_roundup_size(*size);
+
+  addr = mmap(NULL, _size, PROT_NONE, MAP_ANON|MAP_PRIVATE, -1, 0);
   if (addr == MAP_FAILED)
     return NULL;
+  *size = _size;
   return addr;
 }
 
@@ -190,6 +204,7 @@ static int _mmap_database(mmap_ctx * ctx)
 {
   void * addr;
   struct stat sb;
+  size_t size;
   int prot, fd;
 
   /* check context */
@@ -200,18 +215,19 @@ static int _mmap_database(mmap_ctx * ctx)
   if (fstat(fd, &sb) == -1)
     return -(EIO);
   /* check reserved address space */
-  if (sb.st_size > (off_t) ctx->reserved_size)
+  if (sb.st_size > (off_t) ctx->reserved_bytes)
     return -(ERANGE);
 
+  size = _mmap_roundup_size((size_t) sb.st_size);
   prot = PROT_READ;
   if (ctx->flag_rw)
     prot |= PROT_WRITE;
 
-  addr = mmap(ctx->addr, sb.st_size, prot, MAP_FIXED|MAP_SHARED, fd, 0);
+  addr = mmap(ctx->addr, size, prot, MAP_FIXED|MAP_SHARED, fd, 0);
   if (addr == MAP_FAILED)
     return -(ENOMEM);
   /* mmap succeeded */
-  ctx->allocated_size = sb.st_size;
+  ctx->allocated_bytes = size;
   return 0;
 }
 
@@ -219,7 +235,14 @@ static void _free_mounted_db(DB * db)
 {
   if (_release_mounted(db) == 0)
   {
-    munmap(db->mmap_ctx.addr, db->mmap_ctx.reserved_size);
+    /* free allocated space */
+    munmap(db->mmap_ctx.addr, db->mmap_ctx.allocated_bytes);
+    /* free the rest of reserved space */
+    if (db->mmap_ctx.reserved_bytes > db->mmap_ctx.allocated_bytes)
+    {
+      void * addr = (char*)(db->mmap_ctx.addr) + db->mmap_ctx.allocated_bytes;
+      munmap(addr, db->mmap_ctx.reserved_bytes - db->mmap_ctx.allocated_bytes);
+    }
     fclose(db->mmap_ctx.file);
     free(db);
   }
@@ -408,8 +431,8 @@ void stat_db(DB * db)
   printf("db_name     : %s\n", header->db_name);
   printf("created on  : %ld\n", header->created);
   printf("updated on  : %ld\n", header->updated);
-  printf("db_cur_size : %u\n", (unsigned) db->mmap_ctx.allocated_size);
-  printf("db_max_size : %u\n", (unsigned) db->mmap_ctx.reserved_size);
+  printf("db_cur_size : %u\n", (unsigned) db->mmap_ctx.allocated_bytes);
+  printf("db_max_size : %lu\n", db->mmap_ctx.reserved_bytes);
   printf("seg_size    : %u\n", SEGMENT_SIZE(header->seg_mask));
   printf("seg_count   : %u\n", (unsigned) header->seg_nb);
   printf("freelist    : %08x\n", header->free_node);
@@ -566,8 +589,8 @@ DB * mount_db(const char * filepath, int rw)
     goto fail1;
 
   /* reserve the whole size */
-  mmap_ctx.reserved_size = file_header->max_file_size;
-  mmap_ctx.addr = _mmap_reserve(mmap_ctx.reserved_size);
+  mmap_ctx.reserved_bytes = file_header->max_file_size;
+  mmap_ctx.addr = _mmap_reserve(&mmap_ctx.reserved_bytes);
   if (!mmap_ctx.addr)
     goto fail1;
 
@@ -578,7 +601,7 @@ DB * mount_db(const char * filepath, int rw)
     goto fail2;
 
   /* allocated size cannot be less than stated from file header */
-  if (mmap_ctx.allocated_size < sizeof(db_header) +
+  if (mmap_ctx.allocated_bytes < sizeof(db_header) +
           (file_header->seg_nb * SEGMENT_SIZE(file_header->seg_mask) * sizeof (node)))
     goto fail3;
 
@@ -604,7 +627,7 @@ DB * mount_db(const char * filepath, int rw)
 fail3:
   free(db);
 fail2:
-  munmap(mmap_ctx.addr, mmap_ctx.reserved_size);
+  munmap(mmap_ctx.addr, mmap_ctx.reserved_bytes);
 fail1:
   free(file_header);
 fail0:
