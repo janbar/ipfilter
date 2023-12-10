@@ -27,6 +27,7 @@
 #include <unistd.h>
 #include <sys/mman.h>
 #include <sys/stat.h>
+#include <inttypes.h>
 
 #define DBTAG_LEN 4
 static const char * g_dbtag = "IPF3";
@@ -428,15 +429,15 @@ fail0:
 void stat_db(DB * db)
 {
   db_header * header = db->header;
-  printf("db_name     : %s\n", header->db_name);
-  printf("created on  : %ld\n", header->created);
-  printf("updated on  : %ld\n", header->updated);
-  printf("db_cur_size : %u\n", (unsigned) db->mmap_ctx.allocated_bytes);
-  printf("db_max_size : %lu\n", db->mmap_ctx.reserved_bytes);
-  printf("seg_size    : %u\n", SEGMENT_SIZE(header->seg_mask));
-  printf("seg_count   : %u\n", (unsigned) header->seg_nb);
-  printf("freelist    : %08x\n", header->free_node);
-  printf("rootnode    : %08x\n", header->root_node);
+  printf("db_name    : %s\n", header->db_name);
+  printf("created on : %" PRId64 "\n", (int64_t)header->created);
+  printf("updated on : %" PRId64 "\n", (int64_t)header->updated);
+  printf("db_cur_size: %" PRIu64 "\n", (uint64_t)db->mmap_ctx.allocated_bytes);
+  printf("db_max_size: %" PRIu64 "\n", (uint64_t)db->mmap_ctx.reserved_bytes);
+  printf("seg_size   : %u\n", SEGMENT_SIZE(header->seg_mask));
+  printf("seg_count  : %u\n", (unsigned)header->seg_nb);
+  printf("freelist   : %08x\n", header->free_node);
+  printf("rootnode   : %08x\n", header->root_node);
 }
 
 void close_db(DB ** db)
