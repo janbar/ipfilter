@@ -41,9 +41,6 @@ static char*
 ngx_http_ipfilter_du_loc_conf(ngx_conf_t* cf, ngx_command_t* cmd, void* conf);
 
 static char*
-ngx_http_ipfilter_ru_loc_conf(ngx_conf_t* cf, ngx_command_t* cmd, void* conf);
-
-static char*
 ngx_http_ipfilter_db_loc_conf(ngx_conf_t* cf, ngx_command_t* cmd, void* conf);
 
 static void*
@@ -64,7 +61,6 @@ ngx_http_ipfilter_flags_loc_conf(ngx_conf_t* cf, ngx_command_t* cmd, void* conf)
 #define TOP_DBFILE_N            "ipfilter_db"
 #define TOP_DENIED_URL_N        "ipfilter_denied_url"
 #define TOP_ENABLED_FLAG_N      "ipfilter_enabled"
-#define TOP_RULE_N              "ipfilter_rule"
 
 /* command handled by the module */
 static ngx_command_t ngx_http_ipfilter_commands[] = {
@@ -80,13 +76,6 @@ static ngx_command_t ngx_http_ipfilter_commands[] = {
   { ngx_string(TOP_DENIED_URL_N),
     NGX_HTTP_MAIN_CONF | NGX_HTTP_LOC_CONF | NGX_HTTP_LMT_CONF | NGX_CONF_1MORE,
     ngx_http_ipfilter_du_loc_conf,
-    NGX_HTTP_LOC_CONF_OFFSET,
-    0,
-    NULL},
-
-  { ngx_string(TOP_RULE_N),
-    NGX_HTTP_MAIN_CONF | NGX_HTTP_LOC_CONF | NGX_HTTP_LMT_CONF | NGX_CONF_1MORE,
-    ngx_http_ipfilter_ru_loc_conf,
     NGX_HTTP_LOC_CONF_OFFSET,
     0,
     NULL},
@@ -263,44 +252,6 @@ ngx_http_ipfilter_du_loc_conf(ngx_conf_t* cf, ngx_command_t* cmd, void* conf)
 }
 
 static char*
-ngx_http_ipfilter_ru_loc_conf(ngx_conf_t* cf, ngx_command_t* cmd, void* conf)
-{
-  ngx_http_ipfilter_loc_conf_t * alcf = conf, **bar;
-  ngx_http_ipfilter_main_conf_t* main_cf;
-  ngx_str_t* value;
-
-  if (!alcf || !cf)
-    return (NGX_CONF_ERROR);
-
-  main_cf = ngx_http_conf_get_module_main_conf(cf, ngx_http_ipfilter_module);
-  if (!alcf->pushed)
-  {
-    bar = ngx_array_push(main_cf->locations);
-    if (!bar)
-      return (NGX_CONF_ERROR);
-    *bar = alcf;
-    alcf->pushed = 1;
-  }
-
-  value = cf->args->elts;
-  NX_CONF_DEBUG(_debug_readconf, NGX_LOG_NOTICE, cf, 0,
-                IPFILTER_TAG " RU: %V %V", &(value[0]), &(value[1]));
-
-  if (!ngx_strcmp(value[0].data, TOP_RULE_N) && value[1].len)
-  {
-    if (!ngx_strcmp(value[1].data, "deny"))
-      alcf->rule_deny = 1;
-    else if (!ngx_strcmp(value[1].data, "allow"))
-      alcf->rule_deny = 0;
-    else
-      return NGX_CONF_ERROR;
-    return (NGX_CONF_OK);
-  }
-
-  return NGX_CONF_ERROR;
-}
-
-static char*
 ngx_http_ipfilter_db_loc_conf(ngx_conf_t* cf, ngx_command_t* cmd, void* conf)
 {
   ngx_http_ipfilter_loc_conf_t * alcf = conf, **bar;
@@ -367,8 +318,6 @@ ngx_http_ipfilter_merge_loc_conf(ngx_conf_t* cf, void* parent, void* child)
     conf->denied_url = prev->denied_url;
   if (conf->db_file == NULL)
     conf->db_file = prev->db_file;
-  if (conf->rule_deny == 0)
-    conf->rule_deny = prev->rule_deny;
   if (conf->db_instance == NULL)
     conf->db_instance = prev->db_instance;
 
@@ -455,7 +404,7 @@ ngx_http_ipfilter_access_handler(ngx_http_request_t* r)
   if (end - start > PROCESSING_THRESHOLD)
   {
     ngx_log_error(NGX_LOG_WARN, r->connection->log, 0,
-                  IPFILTER_TAG " PROCESSING TOOK TOO LONG : elapsed=%l",
+                  IPFILTER_TAG " PROCESSING TOOK TOO LONG : ELAPSED=%l",
                   (end - start));
   }
 

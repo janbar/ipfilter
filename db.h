@@ -33,14 +33,22 @@ typedef struct DB DB;
 
 typedef enum
 {
-  db_error      = -1,
   db_not_found  = 0,
-  db_matched    = 1,
+  db_allow      = 1,
+  db_deny       = 2,
+  db_error      = 3,
 } db_response;
+
+typedef enum
+{
+  rule_allow    = db_allow,
+  rule_deny     = db_deny,
+} db_rule;
 
 const char * db_format();
 
-/* Create database with the given segment size (default 256).
+/**
+ * Create database with the given segment size (default 0 = 256).
  * Argument 'seg_size' defines the number of node per extent. The max count of
  * extent is fixed to 16K. Therefore the given value will define the max size
  * of the database as follows:
@@ -50,42 +58,107 @@ const char * db_format();
  *
  * As max_db_size is reserved in virtual memory, do not increase seg_size
  * unnecessarily. In most cases the default value (256) is large enough.
+ * The db handle must be closed to free allocated resources (see close_db).
+ * @param filepath Path of the db file
+ * @param db_name The string of the name (30 chars)
+ * @param seg_size Number of node per segment (0=256 or 512,1024...)
+ * @return The DB handle, else NULL
  */
 DB * create_db(const char * filepath, const char * db_name, unsigned seg_size);
 
-db_response create_record(DB * db, cidr_address * adr);
+/**
+ * Returns the database name
+ * @param db The DB handle
+ * @return The string terminated by 0
+ */
+const char * db_name(DB * db);
 
-int fill_database_from_text(DB * db, const char * filepath);
-
-const char * db_name(DB *db);
-
+/**
+ * Rename the database
+ * @param db The DB handle
+ * @param name The string of the new name (30 chars)
+ */
 void rename_db(DB * db, const char * name);
 
-/*
- * File db
- * Open read-only the database from an existing file.
- * The db handle must be closed to free allocated resources (see close_db).
+/**
+ * Update database with a new rule for the given CIDR
+ * @param db The DB handle
+ * @param cidr
+ * @param rule
+ * @return The old state on success, else error
+ */
+db_response insert_cidr(DB * db, cidr_address * cidr, db_rule rule);
+
+/**
+ * Update timestamp of the database
+ * @param db The DB handle
+ */
+void db_updated(DB * db);
+
+/**
+ * Mount database from the given db file. The db handle must be closed to free
+ * allocated resources (see close_db).
  * WARNING: mount/close are not thread-safe, therefore you must lock the call
  * to these functions.
+ * @param filepath Path of db file
+ * @param rw The mode 0=Read 1=Read-Write
+ * @return The DB handle, else NULL
  */
-
 DB * mount_db(const char * filepath, int rw);
 
 /*
  * Basic operations on database
  */
 
+/**
+ * Print the database header infos on the standard output
+ * @param db The DB handle
+ */
 void stat_db(DB * db);
 
+/**
+ * Purge the mounted RW database
+ * That allows to defrag an existing database, to be refilled on the fly.
+ * @param db The DB handle
+ */
+void purge_db(DB * db);
+
+/**
+ * Close the database and free allocated resources
+ * The given DB handle will be nullified (NULL)
+ * @param db A pointer to the DB handle
+ */
 void close_db(DB ** db);
 
-db_response find_record(DB * db, cidr_address * adr);
+/**
+ * Query the database for the given address/subnet
+ * @param db The DB handle
+ * @param cidr
+ * @return The state among allow deny empty, else error
+ */
+db_response find_record(DB * db, cidr_address * cidr);
 
 /*
  * utilities
  */
+
+/**
+ * Helper to fill the struct cidr_address from CIDR string
+ * The supported format is nnn.nnn.nnn.nnn/pp
+ * @param cidr The struct to load
+ * @param cidr_str The formatted string
+ * @return 0 on success, else error
+ */
 int create_cidr_address(cidr_address * cidr, const char * cidr_str);
 
+/**
+ * Helper to fill the struct cidr_address from address string and prefix
+ * The supported format is nnn.nnn.nnn.nnn for the address
+ * @param cidr The struct to load
+ * @param addr_str The formatted string
+ * @param prefix subnet number (0-32)
+ * @return 0 on success, else error
+ */
 int create_cidr_address_2(cidr_address * cidr,
         const char * addr_str, int prefix);
 

@@ -31,7 +31,7 @@
 #include <inttypes.h>
 
 #define DBTAG_LEN 4
-static const char * g_dbtag = "IPF3";
+static const char * g_dbtag = "IPF4";
 static const int g_indianness = 0xFF000000;
 
 #define SEGS        0x100      /* base of segment size */
@@ -41,11 +41,11 @@ static const int g_indianness = 0xFF000000;
 
 #define SEGMENT_SIZE(m) ((unsigned)(m) + 1)
 
-#define LEAF        0xC0000000 /* 2 bits size */
-#define LEAF_1      (db_matched << 30)
-#define LEAF_2      (db_matched << 31) /* reserved */
+#define LEAF        0xC0000000
+#define LEAF_ALLOW  0x40000000
+#define LEAF_DENY   0x80000000
 
-#define LEAF_VALUE(u)   ((u >> 30) & 0x3)
+#define LEAF_VALUE(u)   ((db_response)((u >> 30) & 0x3))
 
 typedef struct
 {
@@ -65,8 +65,8 @@ typedef struct
 
 typedef struct
 {
-  uint32_t  raw0;           /* 1 bit leaf, 31 bit addr */
-  uint32_t  raw1;           /* 1 bit leaf, 31 bit addr */
+  uint32_t  raw0;           /* 2 bits leaf, 30 bit addr */
+  uint32_t  raw1;           /* 2 bits leaf, 30 bit addr */
 } node;
 
 typedef struct
@@ -96,11 +96,11 @@ typedef struct mounted mounted;
 
 struct mounted
 {
-  DB *      db;
-  uint32_t  hash;
-  uint32_t  refcount;
-  mounted * _prev;
-  mounted * _next;
+  DB *       db;
+  uint32_t   hash;
+  volatile uint32_t refcount;
+  mounted *  _prev;
+  mounted *  _next;
 };
 
 static mounted * g_mounted = NULL;
@@ -291,10 +291,12 @@ static int add_segment(DB * db)
     for (n = 1; n < db->cache.seg_sz; ++n)
     {
       _node->raw0 = newid + n;
+      _node->raw1 = 0;
       ++_node;
     }
     /* attach the segment and update freelist front */
     _node->raw0 = header->free_node;
+    _node->raw1 = 0;
     header->free_node = newid;
     header->seg_nb = ++cur_seg_nb;
     /* move to next segment */
@@ -332,10 +334,35 @@ static node * new_node(DB * db, uint32_t * node_id)
   /* get node from freelist */
   if (header->free_node)
   {
-    *node_id = header->free_node;
+    /* keep back LEAF and chain the new node (ADDR) */
+    *node_id = (*node_id & LEAF) | (header->free_node & ADDR);
     node * freenode = get_node(db, *node_id);
-    header->free_node = freenode->raw0 & ADDR;
+
+    if (freenode->raw0 & ADDR)
+    {
+      header->free_node = freenode->raw0;
+
+      /* move the right branch to next end at right
+       * by doing that, the cost is the lowest */
+      if ((freenode->raw1 & ADDR))
+      {
+        node * _node = get_node(db, freenode->raw0);
+        while (_node && (_node->raw1 & ADDR))
+          _node = get_node(db, _node->raw1);
+        if (!_node)
+          return NULL; /* corruption */
+        _node->raw1 = freenode->raw1;
+      }
+    }
+    else
+    {
+      /* here reorg is not necessary */
+      header->free_node = freenode->raw1;
+    }
+
+    /* clear the new node before returning */
     freenode->raw0 = 0;
+    freenode->raw1 = 0;
     return freenode;
   }
   if (add_segment(db) > 0)
@@ -348,7 +375,7 @@ const char * db_format()
   return g_dbtag;
 }
 
-const char * db_name(DB *db)
+const char * db_name(DB * db)
 {
   return db->header->db_name;
 }
@@ -418,6 +445,7 @@ DB * create_db(const char * filepath, const char * db_name, unsigned seg_size)
     close_db(&db);
     return NULL;
   }
+  /* set the root node */
   new_node(db, &(db->header->root_node));
   return db;
 fail1:
@@ -447,45 +475,80 @@ void close_db(DB ** db)
   *db = NULL;
 }
 
-static db_response _create_record(DB * db, cidr_address * adr)
+static int _give_back_tree(DB * db, uint32_t node_id)
+{
+  if ((node_id & ADDR))
+  {
+    node * _node = get_node(db, node_id);
+    /* go to leaf */
+    while (_node && (_node->raw0 & ADDR))
+      _node = get_node(db, _node->raw0);
+    if (!_node)
+      return (-1); /* corruption */
+    _node->raw0 = db->header->free_node;
+    db->header->free_node = (node_id & ADDR);
+  }
+  return 0;
+}
+
+static db_response _create_record(DB * db, cidr_address * cidr, uint32_t leaf_mask)
 {
   node * n = get_node(db, 0);
-  int b, v = 0, ln = adr->prefix - 1;
+  int b, v = 0, ln = cidr->prefix - 1;
+  uint32_t inherit = 0;
 
-  for (b = 0; b < adr->prefix; ++b)
+  for (b = 0; b < cidr->prefix; ++b)
   {
     int c = b >> 3;
     int d = 7 - b + (c << 3);
-    v = (adr->addr[c] >> d) & 0x1;
+    v = (cidr->addr[c] >> d) & 0x1;
     //printf("%d ", v);
 
     /* corruption or failure */
     if (!n)
       return db_error;
 
+    /* left branch */
     if (v == 0)
     {
-      /* left branch */
-      if ((n->raw0 & LEAF))
-        return db_matched;
       if (b == ln)
-        break;
-      if (!(n->raw0 & ADDR))
-        n = new_node(db, &(n->raw0));
-      else
+        break; /* make the leaf here */
+      /* next node */
+      if ((n->raw0 & ADDR))
         n = get_node(db, n->raw0);
+      else if ((n->raw0 & leaf_mask))
+        return LEAF_VALUE(leaf_mask); /* already exists */
+      else
+      {
+        /* start a new branch ? */
+        if (!inherit)
+          inherit = n->raw0 & LEAF;
+        else
+          n->raw1 = inherit; /* make new leaf at right */
+        n->raw0 = 0; /* make new node */
+        n = new_node(db, &(n->raw0));
+      }
     }
+    /* right branch */
     else
     {
-      /* right branch */
-      if ((n->raw1 & LEAF))
-        return db_matched;
       if (b == ln)
-        break;
-      if (!(n->raw1 & ADDR))
-        n = new_node(db, &(n->raw1));
-      else
+        break; /* make the leaf here */
+      /* next node */
+      if ((n->raw1 & ADDR))
         n = get_node(db, n->raw1);
+      else if ((n->raw1 & leaf_mask))
+        return LEAF_VALUE(leaf_mask); /* already exists */
+      else
+      {
+        /* start a new branch ? */
+        if (!inherit)
+          inherit = n->raw1 & LEAF;
+        else
+          n->raw0 = inherit; /* make new leaf at left */
+        n->raw1 = 0; /* make new node */
+        n = new_node(db, &(n->raw1));
+      }
     }
   }
 
@@ -493,29 +556,58 @@ static db_response _create_record(DB * db, cidr_address * adr)
   if (!n)
     return db_error;
 
-  /* flag last node */
-  if (v == 0)
-    n->raw0 |= LEAF_1;
+  /* make the leaf */
+  if (ln < 0)
+  {
+    if (_give_back_tree(db, n->raw0) < 0 || _give_back_tree(db, n->raw1) < 0)
+      return db_error;
+    n->raw0 = leaf_mask;
+    n->raw1 = leaf_mask;
+  }
+  else if (v == 0)
+  {
+    if (_give_back_tree(db, n->raw0) < 0)
+      return db_error;
+    n->raw0 = leaf_mask;
+    if (inherit && !(n->raw1 & ADDR))
+      n->raw1 = inherit;
+  }
   else
-    n->raw1 |= LEAF_1;
-  //printf("n %p = %d , %d\n", n, LEAF_VALUE(n->raw0), LEAF_VALUE(n->raw1);
+  {
+    if (_give_back_tree(db, n->raw1) < 0)
+      return db_error;
+    n->raw1 = leaf_mask;
+    if (inherit && !(n->raw0 & ADDR))
+      n->raw0 = inherit;
+  }
+  //printf("n %p = %d , %d\n", n, LEAF_VALUE(n->raw0), LEAF_VALUE(n->raw1));
   return db_not_found;
 }
 
-db_response create_record(DB * db, cidr_address * adr)
+db_response insert_cidr(DB * db, cidr_address * cidr, db_rule rule)
 {
-  db_response r = _create_record(db, adr);
-  if (r == db_not_found)
-    db->header->updated = time(NULL);
-  return r;
+  switch (rule)
+  {
+  case rule_allow:
+    return _create_record(db, cidr, LEAF_ALLOW);
+  case rule_deny:
+    return _create_record(db, cidr, LEAF_DENY);
+  }
+  return db_error;
 }
 
-db_response find_record(DB * db, cidr_address * adr)
+void db_updated(DB * db)
+{
+  db->header->updated = time(NULL);
+}
+
+db_response find_record(DB * db, cidr_address * cidr)
 {
   node * n = get_node(db, 0);
   int b, v = 0;
+  uint32_t found_mask = 0;
 
-  for (b = 0; b < adr->prefix; ++b)
+  for (b = 0; b < cidr->prefix; ++b)
   {
     int c = b >> 3;
     int p = 7 - b + (c << 3);
@@ -524,27 +616,62 @@ db_response find_record(DB * db, cidr_address * adr)
     if (!n)
       return db_error;
 
-    v = (adr->addr[c] >> p) & 0x1;
+    v = (cidr->addr[c] >> p) & 0x1;
     if (v == 0)
     {
       /* left branch */
-      if ((n->raw0 & LEAF))
-        return db_matched;
+      uint32_t mask = n->raw0 & LEAF;
+      if (mask)
+        found_mask = mask;
       if (!(n->raw0 & ADDR))
-        return db_not_found;
+        return LEAF_VALUE(found_mask);
       n = get_node(db, n->raw0);
     }
     else
     {
       /* right branch */
-      if ((n->raw1 & LEAF))
-        return db_matched;
+      uint32_t mask = n->raw1 & LEAF;
+      if (mask)
+        found_mask = mask;
       if (!(n->raw1 & ADDR))
-        return db_not_found;
+        return LEAF_VALUE(found_mask);
       n = get_node(db, n->raw1);
     }
   }
-  return db_not_found;
+  return LEAF_VALUE(found_mask);
+}
+
+void purge_db(DB * db)
+{
+  unsigned s;
+  node * seg = db->data;
+  db_header * header = db->header;
+
+  db->data->raw0 = 0;
+  db->data->raw1 = 0;
+  header->free_node = 0;
+
+  for (s = 0; s < db->cache.seg_nb; ++s)
+  {
+    /* seg no start from 1 */
+    uint32_t newid = ((s + 1) << 16);
+    node * _node = seg;
+    unsigned n;
+    /* chain all members on front of the freelist */
+    for (n = 1; n < db->cache.seg_sz; ++n)
+    {
+      _node->raw0 = newid + n;
+      _node->raw1 = 0;
+      ++_node;
+    }
+    /* attach the segment and update freelist front */
+    _node->raw0 = header->free_node;
+    _node->raw1 = 0;
+    header->free_node = newid;
+    /* move to next segment */
+    seg += db->cache.seg_sz;
+  }
+  new_node(db, &(header->root_node));
 }
 
 static int _read_db_header(db_header * header, FILE * file)
@@ -659,66 +786,4 @@ int create_cidr_address_2(cidr_address * cidr,
     return -(EINVAL);
   cidr->prefix = prefix;
   return 0;
-}
-
-static unsigned _readln(char * buf, unsigned n, FILE * file)
-{
-  unsigned r = 0;
-  int c;
-  while (r < n)
-  {
-    if ((c = fgetc(file)) <= 0)
-      break;
-    /* bypass CTRL+R */
-    if (c == '\r')
-      continue;
-    ++r;
-    *buf = (char) c;
-    if (c == '\n')
-      break;
-    ++buf;
-  }
-  return r;
-}
-
-int fill_database_from_text(DB * db, const char * filepath)
-{
-  FILE* file = fopen(filepath, "r");
-  char buf[256];
-  unsigned r = 0, l = 0, c = 0;
-  if (!file)
-    return -(ENOENT);
-  while ((r = _readln(buf, sizeof (buf) - 1, file)))
-  {
-    ++l; /* for debug */
-    /* read line must be terminated by CTRL+N */
-    if (buf[r - 1] != '\n')
-      break;
-    /* convert to string ending with zero */
-    buf[r - 1] = '\0';
-    /* trim spaces */
-    char * p = buf;
-    while (*p == ' ')
-    {
-      ++p;
-    }
-    /* discard comment or empty line */
-    if (*p == '#' || (p - buf + 1) == r)
-      continue;
-    //printf("parse address %s\n", buf);
-    cidr_address adr;
-    if (create_cidr_address(&adr, buf) < 0)
-      break;
-    if (_create_record(db, &adr) == db_error)
-      break;
-    ++c;
-  }
-  fclose(file);
-  if (c > 0)
-    db->header->updated = time(NULL);
-  if (r == 0)
-    return 0;
-  buf[r] = '\0';
-  printf("ERROR: Insertion failed on '%s' at line %d.\n", buf, l);
-  return -(EINVAL);
 }

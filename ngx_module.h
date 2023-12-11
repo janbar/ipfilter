@@ -39,7 +39,6 @@ typedef struct
   ngx_flag_t    enabled;
   ngx_str_t*    denied_url;
   ngx_str_t*    db_file;
-  ngx_flag_t    rule_deny;
 
   DB*           db_instance;
   size_t        request_processed;

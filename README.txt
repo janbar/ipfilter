@@ -11,7 +11,7 @@ Create a database
 =================
 
 First you need to download some CIDR files or define your list of CIDR records
-to be inserted in the database. Finally use the CLI 'ipfiltercli' to create or
+to fill the database. Finally use the CLI 'ipfiltercli' to create or
 update the database as follows:
 
   1. Launch the CLI.
@@ -22,24 +22,25 @@ update the database as follows:
 
   >>> create database.db
   noname >>> setname DB1
-  DB1 >>> load firewall_france.txt
-  DB1 >>> insert 127.0.0.0/16
-  DB1 >>> insert 10.0.0.0/16
+  DB1 >>> load allow firewall_france.txt
+  DB1 >>> allow 127.0.0.0/16
+  DB1 >>> allow 10.0.0.0/16
+  DB1 >>> load deny firewall_denied.txt
+  ...
 
   3. Make some Tests.
 
   DB1 >>> test 127.0.0.1/32
-  [ matched ] elap: 0.000004 sec
+  [ allow ] elap: 0.000004 sec
   DB1 >>> test 8.8.8.8/32
-  [not found] elap: 0.000004 sec
+  [ empty ] elap: 0.000004 sec
 
   4. Quit the CLI.
 
   DB1 >>> exit
 
   Notes:
-  You will use the database to implement a rule 'allow' or 'deny'. Therefore
-  the content will depend of the rule you want apply.
+  Empty result are denied by default.
 
 Configure the module for NGINX
 ==============================
@@ -57,7 +58,6 @@ Configure the module for NGINX
 
   location / {
       ipfilter_enabled;                            # enable the module
-      ipfilter_rule allow;                         # allow | deny
       ipfilter_denied_url "/403.html";             # denied url
       ipfilter_db /etc/nginx/modules/database.db;  # path of the database file
       ...
@@ -65,8 +65,8 @@ Configure the module for NGINX
   4. Restart the server NGINX.
 
   At this point, the module has been enabled for the configured location(s).
-  In the given example, only the request with IP that matches in the database
-  are allowed to browse resources. Others are redirected to the denied url.   
+  In the given example, only the request with allowed IP in the database are
+  allowed to browse resources. Others are redirected to the denied url.   
 
 Update the database
 ===================
@@ -82,9 +82,9 @@ Update the database
 
   mount /etc/nginx/modules/database.db
 
-  3. Use insert, load ... [delete, purge, list : not yet implemented]
+  3. Use allow, deny, load ...
 
-  insert 10.1.0.0/16
+  allow  10.1.0.0/16
 
   Notes:
   Updates are applied instantly. 

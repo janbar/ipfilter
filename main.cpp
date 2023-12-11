@@ -34,12 +34,16 @@
 #define FLUSHOUT() fflush(stdout);
 #define PRINT(a) fprintf(stdout, a)
 #define PRINT1(a,b) fprintf(stdout, a, b)
+#define PRINT2(a,b,c) fprintf(stdout, a, b, c)
 #define PERROR(a) fprintf(stderr, a)
 #define PERROR1(a,b) fprintf(stderr, a, b)
+#define PERROR2(a,b,c) fprintf(stderr, a, b, c)
 
 static const char * getCmd(char **begin, char **end, const std::string& option);
 static const char * getCmdOption(char **begin, char **end, const std::string& option);
 static void readInStream();
+
+int load_cidr_file(DB * db, const char * filepath, db_rule rule);
 
 static DB * g_db = nullptr;
 
@@ -130,10 +134,12 @@ static bool parseCommand(const std::string& line)
       PRINT("MOUNT $1                      Mount database from binary db file\n");
       PRINT("  $1 : file path (no space)\n");
       PRINT("STATUS                        Show statistics of the database\n");
-      PRINT("INSERT $CIDR                  Add new record CIDR (n.n.n.n/n)\n");
+      PRINT("ALLOW $CIDR                   Allow CIDR (n.n.n.n/n)\n");
+      PRINT("DENY $CIDR                    Deny CIDR (n.n.n.n/n)\n");
       PRINT("TEST $CIDR                    Test CIDR matching (n.n.n.n/n)\n");
-      PRINT("LOAD $1                       Fill database with content of CIDR file\n");
+      PRINT("LOAD ALLOW|DENY $1            Fill database with CIDR file\n");
       PRINT("  $1 : file path (no space)\n");
+      PRINT("PURGE FORCE                   Purge the database\n");
       PRINT("HELP                          Print this help\n");
       PRINT("\n");
     }
@@ -163,6 +169,21 @@ static bool parseCommand(const std::string& line)
       if (g_db)
         stat_db(g_db);
     }
+    else if (token == "PURGE")
+    {
+      if (++it != tokens.end() && g_db)
+      {
+        std::string param(*it);
+        upstr(param);
+        if (param == "FORCE")
+        {
+          purge_db(g_db);
+          PERROR("Database has been purged\n");
+        }
+      }
+      else
+        PERROR("Invalid context\n");
+    }
     else if (token == "TEST")
     {
       if (++it != tokens.end() && g_db)
@@ -174,16 +195,29 @@ static bool parseCommand(const std::string& line)
           double t0 = timestamp();
           int r = find_record(g_db, &cidr);
           double d = timestamp() - t0;
-          if (r)
-            PRINT1("[ matched ] elap: %f sec\n", d);
-          else
-            PRINT1("[not found] elap: %f sec\n", d);
+          switch (r)
+          {
+          case db_not_found:
+            PRINT1("[ empty ] elap: %f sec\n", d);
+            break;
+          case db_allow:
+            PRINT1("[ allow ] elap: %f sec\n", d);
+            break;
+          case db_deny:
+            PRINT1("[ deny  ] elap: %f sec\n", d);
+            break;
+          case db_error:
+            PERROR1("Error: %d\n", LASTERROR);
+            break;
+          }
         }
         else
-          PERROR("Invalid entry\n");
+          PERROR("Error: Invalid argument\n");
       }
+      else
+        PERROR("Error: Invalid context\n");
     }
-    else if (token == "INSERT")
+    else if (token == "ALLOW")
     {
       if (++it != tokens.end() && g_db)
       {
@@ -192,32 +226,76 @@ static bool parseCommand(const std::string& line)
         if (create_cidr_address(&cidr, param.c_str()) == 0)
         {
           double t0 = timestamp();
-          db_response r = create_record(g_db, &cidr);
+          db_response r = insert_cidr(g_db, &cidr, rule_allow);
           double d = timestamp() - t0;
-          if (r == db_matched)
+          if (r == db_allow)
+            PRINT("Already exists\n");
+          else if (r == db_not_found)
+            PRINT1("Inserted, elap: %f sec\n", d);
+          else
+            PERROR1("Error: %d\n", LASTERROR);
+        }
+        else
+          PERROR("Error: Invalid argument\n");
+      }
+      else
+        PERROR("Error: Invalid context\n");
+    }
+    else if (token == "DENY")
+    {
+      if (++it != tokens.end() && g_db)
+      {
+        std::string param(*it);
+        cidr_address cidr;
+        if (create_cidr_address(&cidr, param.c_str()) == 0)
+        {
+          double t0 = timestamp();
+          db_response r = insert_cidr(g_db, &cidr, rule_deny);
+          double d = timestamp() - t0;
+          if (r == db_deny)
             PRINT("Entry already exists\n");
           else if (r == db_not_found)
             PRINT1("Inserted, elap: %f sec\n", d);
           else
-            PERROR1("Internal error (%d)\n", r);
+            PERROR1("Error: %d\n", LASTERROR);
         }
         else
-          PERROR("Invalid argument\n");
+          PERROR("Error: Invalid argument\n");
       }
+      else
+        PERROR("Error: Invalid context\n");
     }
     else if (token == "LOAD")
     {
       if (++it != tokens.end() && g_db)
       {
-        std::string param(*it);
-        double t0 = timestamp();
-        int r = fill_database_from_text(g_db, param.c_str());
-        double d = timestamp() - t0;
-        if (r == 0)
-          PRINT1("Loaded, elap: %f sec\n", d);
-        else
-          PERROR1("Error (%d)\n", r);
+        std::string rule(*it);
+        if (++it != tokens.end())
+        {
+          int r = (-1);
+          double d;
+          upstr(rule);
+          std::string param(*it);
+          if (rule == "ALLOW")
+          {
+            d = timestamp();
+            r = load_cidr_file(g_db, param.c_str(), rule_allow);
+            d = timestamp() - d;
+          }
+          else if (rule == "DENY")
+          {
+            d = timestamp();
+            r = load_cidr_file(g_db, param.c_str(), rule_deny);
+            d = timestamp() - d;
+          }
+          if (r == 0)
+            PRINT1("Loaded, elap: %f sec\n", d);
+          else
+            PERROR1("Error: %d\n", r);
+        }
       }
+      else
+        PERROR("Error: Invalid context\n");
     }
     else if (token == "MOUNT")
     {
@@ -230,8 +308,10 @@ static bool parseCommand(const std::string& line)
         if (g_db)
           PRINT("Mounted\n");
         else
-          PERROR1("Error (%d)\n", LASTERROR);
+          PERROR1("Error: %d\n", LASTERROR);
       }
+      else
+        PERROR("Error: Invalid argument\n");
     }
     else
     {
@@ -304,4 +384,77 @@ static void readInStream()
   }
 
   delete[] buf;
+}
+
+/*****************************************************************************/
+/* Macros                                                                    */
+/*****************************************************************************/
+
+static unsigned _readln(char * buf, unsigned n, FILE * file)
+{
+  unsigned r = 0;
+  int c;
+  while (r < n)
+  {
+    if ((c = fgetc(file)) <= 0)
+      break;
+    /* bypass CTRL+R */
+    if (c == '\r')
+      continue;
+    ++r;
+    *buf = (char) c;
+    if (c == '\n')
+      break;
+    ++buf;
+  }
+  return r;
+}
+
+int load_cidr_file(DB * db, const char * filepath, db_rule rule)
+{
+  FILE* file = fopen(filepath, "r");
+  char line[256];
+  unsigned r = 0, l = 0, c = 0;
+  if (!file)
+    return -(ENOENT);
+  while ((r = _readln(line, sizeof (line) - 1, file)))
+  {
+    ++l; /* for debug */
+    /* read line must be terminated by CTRL+N */
+    if (line[r - 1] != '\n')
+      break;
+    /* convert to string ending with zero */
+    line[r - 1] = '\0';
+    /* parse line */
+    std::vector<std::string> tokens;
+    tokenize(line, " ", tokens, true);
+    std::vector<std::string>::const_iterator it = tokens.begin();
+    if (it == tokens.end())
+      continue;
+    std::string token(*it);
+    /* discard comment or empty line */
+    if (token.at(0) == '#')
+      continue;
+    /* parse CIDR address */
+    cidr_address adr;
+    if (create_cidr_address(&adr, token.c_str()) < 0)
+      break;
+    if (insert_cidr(db, &adr, rule) == db_error)
+      break;
+    if (!(c & 0xff))
+    {
+      PRINT(".");
+      FLUSHOUT();
+    }
+    ++c;
+  }
+  PRINT1(" %u\n", c);
+  fclose(file);
+  if (c > 0)
+    db_updated(db);
+  if (r == 0)
+    return 0;
+  line[r] = '\0';
+  PERROR2("ERROR: Insertion failed on '%s' at line %d.\n", line, l);
+  return -(EINVAL);
 }
