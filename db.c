@@ -45,7 +45,7 @@ static const int g_indianness = 0xFF000000;
 #define LEAF_ALLOW  0x40000000
 #define LEAF_DENY   0x80000000
 
-#define LEAF_VALUE(u)   ((db_response)((u >> 30) & 0x3))
+#define LEAF_VALUE(u)   ((db_response)(((u) >> 30) & 0x3))
 
 typedef struct
 {
@@ -605,7 +605,6 @@ db_response find_record(DB * db, cidr_address * cidr)
 {
   node * n = get_node(db, 0);
   int b, v = 0;
-  uint32_t found_mask = 0;
 
   for (b = 0; b < cidr->prefix; ++b)
   {
@@ -620,25 +619,19 @@ db_response find_record(DB * db, cidr_address * cidr)
     if (v == 0)
     {
       /* left branch */
-      uint32_t mask = n->raw0 & LEAF;
-      if (mask)
-        found_mask = mask;
       if (!(n->raw0 & ADDR))
-        return LEAF_VALUE(found_mask);
+        return LEAF_VALUE(n->raw0 & LEAF);
       n = get_node(db, n->raw0);
     }
     else
     {
       /* right branch */
-      uint32_t mask = n->raw1 & LEAF;
-      if (mask)
-        found_mask = mask;
       if (!(n->raw1 & ADDR))
-        return LEAF_VALUE(found_mask);
+        return LEAF_VALUE(n->raw1 & LEAF);
       n = get_node(db, n->raw1);
     }
   }
-  return LEAF_VALUE(found_mask);
+  return db_not_found;
 }
 
 void purge_db(DB * db)
