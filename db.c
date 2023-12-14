@@ -340,7 +340,7 @@ static node * new_node(DB * db, uint32_t * node_id)
 
     if (freenode->raw0 & ADDR)
     {
-      header->free_node = freenode->raw0;
+      header->free_node = freenode->raw0 & ADDR;
 
       /* move the right branch to next end at right
        * by doing that, the cost is the lowest */
@@ -357,7 +357,7 @@ static node * new_node(DB * db, uint32_t * node_id)
     else
     {
       /* here reorg is not necessary */
-      header->free_node = freenode->raw1;
+      header->free_node = freenode->raw1 & ADDR;
     }
 
     /* clear the new node before returning */
@@ -523,10 +523,13 @@ static db_response _create_record(DB * db, cidr_address * cidr, uint32_t leaf_ma
         /* start a new branch ? */
         if (!inherit)
           inherit = n->raw0 & LEAF;
-        else
-          n->raw1 = inherit; /* make new leaf at right */
         n->raw0 = 0; /* make new node */
         n = new_node(db, &(n->raw0));
+        if (!n)
+          return db_error;
+        /* make new leaf inherit */
+        n->raw0 = inherit;
+        n->raw1 = inherit;
       }
     }
     /* right branch */
@@ -544,10 +547,13 @@ static db_response _create_record(DB * db, cidr_address * cidr, uint32_t leaf_ma
         /* start a new branch ? */
         if (!inherit)
           inherit = n->raw1 & LEAF;
-        else
-          n->raw0 = inherit; /* make new leaf at left */
         n->raw1 = 0; /* make new node */
         n = new_node(db, &(n->raw1));
+        if (!n)
+          return db_error;
+        /* make new leaf inherit */
+        n->raw0 = inherit;
+        n->raw1 = inherit;
       }
     }
   }
@@ -568,17 +574,17 @@ static db_response _create_record(DB * db, cidr_address * cidr, uint32_t leaf_ma
   {
     if (_give_back_tree(db, n->raw0) < 0)
       return db_error;
+    if ((n->raw0 & leaf_mask))
+      return LEAF_VALUE(leaf_mask); /* already exists */
     n->raw0 = leaf_mask;
-    if (inherit && !(n->raw1 & ADDR))
-      n->raw1 = inherit;
   }
   else
   {
     if (_give_back_tree(db, n->raw1) < 0)
       return db_error;
+    if ((n->raw1 & leaf_mask))
+      return LEAF_VALUE(leaf_mask); /* already exists */
     n->raw1 = leaf_mask;
-    if (inherit && !(n->raw0 & ADDR))
-      n->raw0 = inherit;
   }
   //printf("n %p = %d , %d\n", n, LEAF_VALUE(n->raw0), LEAF_VALUE(n->raw1));
   return db_not_found;
