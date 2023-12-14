@@ -426,6 +426,7 @@ DB * create_db(const char * filepath, const char * db_name, unsigned seg_size)
   tmp->seg_nb = 0;
   tmp->seg_mask = seg_mask;
   tmp->free_addr = 0;
+  tmp->root_addr = ADDR; /* invalidate the db until creation is complete */
 
   file = fopen(filepath, "wb");
   if (!file)
