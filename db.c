@@ -58,8 +58,8 @@ typedef struct
 
   uint16_t  seg_nb;         /* nb extents */
   uint16_t  seg_mask;       /* id range mask */
-  uint32_t  free_node;      /* front of freelist (node id) */
-  uint32_t  root_node;      /* node id of the root */
+  uint32_t  free_addr;      /* front of freelist (node addr) */
+  uint32_t  root_addr;      /* addr of the root node */
   char      _padding[4];    /* reserved */
 } db_header;
 
@@ -259,7 +259,7 @@ static int add_segment(DB * db)
   db_header * header = db->header;
 
   /* freelist exists ? */
-  if (header->free_node != 0)
+  if (header->free_addr != 0)
     return 0;
 
   /* can extend again ? */
@@ -284,20 +284,20 @@ static int add_segment(DB * db)
   while (0 < grow--)
   {
     /* seg no start from 1 */
-    uint32_t newid = ((cur_seg_nb + 1) << 16);
+    uint32_t addr = ((cur_seg_nb + 1) << 16);
     node * _node = seg;
     unsigned n;
     /* chain all members on front of the freelist */
     for (n = 1; n < db->cache.seg_sz; ++n)
     {
-      _node->raw0 = newid + n;
+      _node->raw0 = addr + n;
       _node->raw1 = 0;
       ++_node;
     }
     /* attach the segment and update freelist front */
-    _node->raw0 = header->free_node;
+    _node->raw0 = header->free_addr;
     _node->raw1 = 0;
-    header->free_node = newid;
+    header->free_addr = addr;
     header->seg_nb = ++cur_seg_nb;
     /* move to next segment */
     seg += db->cache.seg_sz;
@@ -324,7 +324,7 @@ static node * get_node(DB * db, uint32_t node_id)
     return &(db->data[(seg_no - 1) * db->cache.seg_sz + pos_no]);
   }
   /* return the root node */
-  return get_node(db, db->header->root_node);
+  return get_node(db, db->header->root_addr);
 }
 
 static node * new_node(DB * db, uint32_t * node_id)
@@ -332,15 +332,15 @@ static node * new_node(DB * db, uint32_t * node_id)
   db_header * header = db->header;
 
   /* get node from freelist */
-  if (header->free_node)
+  if (header->free_addr)
   {
     /* keep back LEAF and chain the new node (ADDR) */
-    *node_id = (*node_id & LEAF) | (header->free_node & ADDR);
+    *node_id = (*node_id & LEAF) | header->free_addr;
     node * freenode = get_node(db, *node_id);
 
     if (freenode->raw0 & ADDR)
     {
-      header->free_node = freenode->raw0 & ADDR;
+      header->free_addr = freenode->raw0 & ADDR;
 
       /* move the right branch to next end at right
        * by doing that, the cost is the lowest */
@@ -357,7 +357,7 @@ static node * new_node(DB * db, uint32_t * node_id)
     else
     {
       /* here reorg is not necessary */
-      header->free_node = freenode->raw1 & ADDR;
+      header->free_addr = freenode->raw1 & ADDR;
     }
 
     /* clear the new node before returning */
@@ -425,7 +425,7 @@ DB * create_db(const char * filepath, const char * db_name, unsigned seg_size)
   tmp->updated = tmp->created;
   tmp->seg_nb = 0;
   tmp->seg_mask = seg_mask;
-  tmp->free_node = 0;
+  tmp->free_addr = 0;
 
   file = fopen(filepath, "wb");
   if (!file)
@@ -446,7 +446,7 @@ DB * create_db(const char * filepath, const char * db_name, unsigned seg_size)
     return NULL;
   }
   /* set the root node */
-  new_node(db, &(db->header->root_node));
+  new_node(db, &(db->header->root_addr));
   return db;
 fail1:
   fclose(file);
@@ -465,8 +465,8 @@ void stat_db(DB * db)
   printf("db_max_size: %" PRIu64 "\n", (uint64_t)db->mmap_ctx.reserved_bytes);
   printf("seg_size   : %u\n", SEGMENT_SIZE(header->seg_mask));
   printf("seg_count  : %u\n", (unsigned)header->seg_nb);
-  printf("freelist   : %08x\n", header->free_node);
-  printf("rootnode   : %08x\n", header->root_node);
+  printf("freelist   : %08x\n", header->free_addr);
+  printf("rootnode   : %08x\n", header->root_addr);
 }
 
 void close_db(DB ** db)
@@ -485,8 +485,8 @@ static int _give_back_tree(DB * db, uint32_t node_id)
       _node = get_node(db, _node->raw0);
     if (!_node)
       return (-1); /* corruption */
-    _node->raw0 = db->header->free_node;
-    db->header->free_node = (node_id & ADDR);
+    _node->raw0 = db->header->free_addr;
+    db->header->free_addr = (node_id & ADDR);
   }
   return 0;
 }
@@ -648,29 +648,29 @@ void purge_db(DB * db)
 
   db->data->raw0 = 0;
   db->data->raw1 = 0;
-  header->free_node = 0;
+  header->free_addr = 0;
 
   for (s = 0; s < db->cache.seg_nb; ++s)
   {
     /* seg no start from 1 */
-    uint32_t newid = ((s + 1) << 16);
+    uint32_t addr = ((s + 1) << 16);
     node * _node = seg;
     unsigned n;
     /* chain all members on front of the freelist */
     for (n = 1; n < db->cache.seg_sz; ++n)
     {
-      _node->raw0 = newid + n;
+      _node->raw0 = addr + n;
       _node->raw1 = 0;
       ++_node;
     }
     /* attach the segment and update freelist front */
-    _node->raw0 = header->free_node;
+    _node->raw0 = header->free_addr;
     _node->raw1 = 0;
-    header->free_node = newid;
+    header->free_addr = addr;
     /* move to next segment */
     seg += db->cache.seg_sz;
   }
-  new_node(db, &(header->root_node));
+  new_node(db, &(header->root_addr));
 }
 
 static int _read_db_header(db_header * header, FILE * file)
