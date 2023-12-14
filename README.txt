@@ -2,10 +2,13 @@ IP FILTER MODULE FOR NGINX
 ==========================
 
 The module uses a very efficient algorithm to match an IP address with a large
-number of CIDR addresses. It uses a pre-generated database, filled from any
-list of CIDR records with the following format:
+number of CIDR addresses. It uses a database, filled with list of CIDR records
+with the following format:
 
   nnn.nnn.nnn.nnn/pp
+
+In addition, database operations such as insert, update or delete are extremely
+fast.
 
 Create a database
 =================
