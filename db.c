@@ -16,6 +16,43 @@
  *
  */
 
+/**
+ * DATABASE CONCEPT
+ *   The database store 2 types of chained structure: the data tree and
+ *   the free list. Those structures are similar, meaning a sub-tree of data
+ *   can be linked in the free list.
+ *   This allows for quick updating and deleting. Insertion is just as fast,
+ *   because here we consume at the root of the free list to grow a branch of
+ *   data. The free list is auto balanced.
+ *
+ * TREE STRUCTURE
+ *
+ * BIT                             0              1
+ *                         +--------------+--------------+
+ *  N                      | 00 0x05F004E | 00 0x05F0058 |
+ *                         +-------+------+-------+------+
+ *                                 |  NODE        |  NODE
+ *                                 V              V
+ *       +--------------+--------------+      +--------------+--------------+
+ * N+1   | [10] 0x00000 | 00 0x05F00A2 |      | [01] 0x00000 | [00] 0x00000 |
+ *       +--------------+-------+------+      +--------------+--------------+
+ *         LEAF 2=DENY          |  NODE         LEAF 1=ALLOW       EMPTY
+ *                              V
+ *                         +--------------+--------------+
+ * N+2                     | [01] 0x00000 | [10] 0x00000 |
+ *                         +--------------+--------------+
+ *                           LEAF 1=ALLOW   LEAF 2=DENY
+ *
+ * 0.. = undefined
+ * 00. = deny
+ * 01. = undefined
+ * 010 = allow
+ * 011 = deny
+ * 1.. = undefined
+ * 10. = allow
+ * 11. = undefined
+ */
+
 #include "db.h"
 
 #include <stdint.h>
@@ -466,8 +503,8 @@ void stat_db(DB * db)
 {
   db_header * header = db->header;
   printf("db_name    : %s\n", header->db_name);
-  printf("created on : %" PRId64 "\n", (int64_t)header->created);
-  printf("updated on : %" PRId64 "\n", (int64_t)header->updated);
+  printf("created    : %" PRId64 "\n", (int64_t)header->created);
+  printf("updated    : %" PRId64 "\n", (int64_t)header->updated);
   printf("db_cur_size: %" PRIu64 "\n", (uint64_t)db->mmap_ctx.allocated_bytes);
   printf("db_max_size: %" PRIu64 "\n", (uint64_t)db->mmap_ctx.reserved_bytes);
   printf("seg_size   : %u\n", SEGMENT_SIZE(header->seg_mask));
