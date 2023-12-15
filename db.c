@@ -305,6 +305,12 @@ static int add_segment(DB * db)
   return 1;
 }
 
+/**
+ * Returns a pointer to node
+ * WARNING: no check of the vector address is done, therefore the given value
+ * must be checked before calling this: i.e (node_id & ADDR) != 0.
+ * Calling for 0 will return the root node.
+ */
 static node * get_node(DB * db, uint32_t node_id)
 {
   if (node_id != 0)
@@ -334,8 +340,8 @@ static node * new_node(DB * db, uint32_t * node_id)
   /* get node from freelist */
   if (header->free_addr)
   {
-    /* keep back LEAF and chain the new node (ADDR) */
-    *node_id = (*node_id & LEAF) | header->free_addr;
+    /* chain the new node (ADDR) */
+    *node_id = header->free_addr;
     node * freenode = get_node(db, *node_id);
 
     if (freenode->raw0 & ADDR)
@@ -524,7 +530,7 @@ static db_response _create_record(DB * db, cidr_address * cidr, uint32_t leaf_ma
         /* start a new branch ? */
         if (!inherit)
           inherit = n->raw0 & LEAF;
-        n->raw0 = 0; /* make new node */
+        /* make node */
         n = new_node(db, &(n->raw0));
         if (!n)
           return db_error;
@@ -548,7 +554,7 @@ static db_response _create_record(DB * db, cidr_address * cidr, uint32_t leaf_ma
         /* start a new branch ? */
         if (!inherit)
           inherit = n->raw1 & LEAF;
-        n->raw1 = 0; /* make new node */
+        /* make node */
         n = new_node(db, &(n->raw1));
         if (!n)
           return db_error;
