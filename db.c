@@ -529,7 +529,11 @@ static int _give_back_tree(DB * db, uint32_t node_id)
       _node = get_node(db, _node->raw0);
     if (!_node)
       return (-1); /* corruption */
-    _node->raw0 = db->header->free_addr;
+    /* WARNING: leaf bit must be set to break any query in progress */
+    if (_node->raw0)
+      _node->raw0 = (_node->raw0 & LEAF) | db->header->free_addr;
+    else
+      _node->raw0 = LEAF | db->header->free_addr;
     db->header->free_addr = (node_id & ADDR);
   }
   return 0;
@@ -666,19 +670,29 @@ db_response find_record(DB * db, cidr_address * cidr)
       return db_error;
 
     v = (cidr->addr[c] >> p) & 0x1;
+
+    /* WARNING: On deleting, this branch could be linked to free list.
+     * For this case the leaf bit are set, so first check it to break.
+     */
     if (v == 0)
     {
       /* left branch */
-      if (!(n->raw0 & ADDR))
-        return LEAF_VALUE(n->raw0 & LEAF);
-      n = get_node(db, n->raw0);
+      if ((n->raw0 & LEAF))
+        return LEAF_VALUE(n->raw0);
+      else if ((n->raw0 & ADDR))
+        n = get_node(db, n->raw0);
+      else
+        return db_not_found;
     }
     else
     {
       /* right branch */
-      if (!(n->raw1 & ADDR))
-        return LEAF_VALUE(n->raw1 & LEAF);
-      n = get_node(db, n->raw1);
+      if ((n->raw1 & LEAF))
+        return LEAF_VALUE(n->raw1);
+      else if ((n->raw1 & ADDR))
+        n = get_node(db, n->raw1);
+      else
+        return db_not_found;
     }
   }
   return db_not_found;
