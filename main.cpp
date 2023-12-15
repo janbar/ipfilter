@@ -293,6 +293,8 @@ static bool parseCommand(const std::string& line)
           else
             PERROR1("Error: %d\n", r);
         }
+        else
+          PERROR("Error: Missing argmuent\n");
       }
       else
         PERROR("Error: Invalid context\n");
