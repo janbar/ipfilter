@@ -17,6 +17,8 @@
  */
 
 #include "ngx_module.h"
+#include <ngx_http_variables.h>
+
 #include <sys/times.h>
 
 #ifndef _debug_mechanics
@@ -33,6 +35,9 @@
  */
 static ngx_int_t
 ngx_http_ipfilter_access_handler(ngx_http_request_t* r);
+
+static ngx_int_t
+ngx_http_ipfilter_pre(ngx_conf_t* cf);
 
 static ngx_int_t
 ngx_http_ipfilter_init(ngx_conf_t* cf);
@@ -53,9 +58,17 @@ static void*
 ngx_http_ipfilter_create_main_conf(ngx_conf_t* cf);
 
 static char*
-ngx_http_ipfilter_flags_loc_conf(ngx_conf_t* cf, ngx_command_t* cmd, void* conf);
+ngx_http_ipfilter_enable_loc_conf(ngx_conf_t* cf, ngx_command_t* cmd, void* conf);
+
+static ngx_table_elt_t*
+ngx_http_ipfilter_search_header(ngx_http_request_t* r, const char * name);
+
+static ngx_int_t
+ngx_http_ipfilter_get_variable(ngx_http_request_t *r, ngx_http_variable_value_t *v, uintptr_t data);
 
 /* module context */
+#define IPFILTER_VAR_RESPONSE   "ipfilter"
+#define IPFILTER_X_HEADER       "x-ipfilter"
 
 /* nginx-style names */
 #define TOP_DBFILE_N            "ipfilter_db"
@@ -83,7 +96,7 @@ static ngx_command_t ngx_http_ipfilter_commands[] = {
   /* enable flag - nginx style */
   { ngx_string(TOP_ENABLED_FLAG_N),
     NGX_HTTP_MAIN_CONF | NGX_HTTP_LOC_CONF | NGX_HTTP_LMT_CONF | NGX_CONF_NOARGS,
-    ngx_http_ipfilter_flags_loc_conf,
+    ngx_http_ipfilter_enable_loc_conf,
     NGX_HTTP_LOC_CONF_OFFSET,
     0,
     NULL},
@@ -92,7 +105,7 @@ static ngx_command_t ngx_http_ipfilter_commands[] = {
 };
 
 static ngx_http_module_t ngx_http_ipfilter_module_ctx = {
-  NULL, /* preconfiguration */
+  ngx_http_ipfilter_pre, /* preconfiguration */
   ngx_http_ipfilter_init, /* postconfiguration */
   ngx_http_ipfilter_create_main_conf, /* create main configuration */
   NULL, /* init main configuration */
@@ -116,6 +129,29 @@ ngx_module_t ngx_http_ipfilter_module = {
   NULL, /* exit master */
   NGX_MODULE_V1_PADDING
 };
+
+static ngx_int_t
+ngx_http_ipfilter_pre(ngx_conf_t* cf)
+{
+  ngx_http_variable_t * var;
+  ngx_str_t * name;
+
+  /* register variable for the response */
+  name = ngx_pcalloc(cf->pool, sizeof (ngx_str_t));
+  if (!name)
+    return (NGX_ERROR);
+  name->len = sizeof(IPFILTER_VAR_RESPONSE) - 1;
+  name->data = ngx_pcalloc(cf->pool, name->len);
+  if (!name->data)
+    return (NGX_ERROR);
+  memcpy(name->data, IPFILTER_VAR_RESPONSE, name->len);
+
+  var = ngx_http_add_variable(cf, name, 0);
+  if (!var)
+    return (NGX_ERROR);
+  var->get_handler = ngx_http_ipfilter_get_variable;
+  return (NGX_OK);
+}
 
 static ngx_int_t
 ngx_http_ipfilter_init(ngx_conf_t* cf)
@@ -144,14 +180,6 @@ ngx_http_ipfilter_init(ngx_conf_t* cf)
   {
     if (loc_cf[i]->enabled)
     {
-
-      if (!loc_cf[i]->denied_url || loc_cf[i]->denied_url->len <= 0)
-      {
-        ngx_conf_log_error(NGX_LOG_EMERG, cf, 0,
-                           IPFILTER_TAG " Missing directive '" TOP_DENIED_URL_N "', abort");
-        return (NGX_ERROR);
-      }
-
       if (!loc_cf[i]->db_file || loc_cf[i]->db_file->len <= 0)
       {
         ngx_conf_log_error(NGX_LOG_EMERG, cf, 0,
@@ -182,15 +210,13 @@ ngx_http_ipfilter_init(ngx_conf_t* cf)
 }
 
 static char*
-ngx_http_ipfilter_flags_loc_conf(ngx_conf_t* cf, ngx_command_t* cmd, void* conf)
+ngx_http_ipfilter_enable_loc_conf(ngx_conf_t* cf, ngx_command_t* cmd, void* conf)
 {
   ngx_http_ipfilter_loc_conf_t * alcf = conf, **bar;
   ngx_http_ipfilter_main_conf_t* main_cf;
-  ngx_str_t* value;
 
   if (!alcf || !cf)
     return (NGX_CONF_ERROR);
-  value = cf->args->elts;
   main_cf = ngx_http_conf_get_module_main_conf(cf, ngx_http_ipfilter_module);
   if (!alcf->pushed)
   {
@@ -201,13 +227,8 @@ ngx_http_ipfilter_flags_loc_conf(ngx_conf_t* cf, ngx_command_t* cmd, void* conf)
     alcf->pushed = 1;
   }
 
-  if (!ngx_strcmp(value[0].data, TOP_ENABLED_FLAG_N))
-  {
-    alcf->enabled = 1;
-    return (NGX_CONF_OK);
-  }
-
-  return (NGX_CONF_ERROR);
+  alcf->enabled = 1;
+  return (NGX_CONF_OK);
 }
 
 static char*
@@ -245,6 +266,7 @@ ngx_http_ipfilter_du_loc_conf(ngx_conf_t* cf, ngx_command_t* cmd, void* conf)
       return (NGX_CONF_ERROR);
     memcpy(alcf->denied_url->data, value[1].data, value[1].len);
     alcf->denied_url->len = value[1].len;
+    alcf->redirect = 1;
     return (NGX_CONF_OK);
   }
 
@@ -314,6 +336,8 @@ ngx_http_ipfilter_merge_loc_conf(ngx_conf_t* cf, void* parent, void* child)
     conf->pushed = prev->pushed;
   if (conf->enabled == 0)
     conf->enabled = prev->enabled;
+  if (conf->redirect == 0)
+    conf->redirect = prev->redirect;
   if (conf->denied_url == NULL)
     conf->denied_url = prev->denied_url;
   if (conf->db_file == NULL)
@@ -338,6 +362,99 @@ ngx_http_ipfilter_create_main_conf(ngx_conf_t* cf)
   if (!mc->locations)
     return (NGX_CONF_ERROR);
   return (mc);
+}
+
+static ngx_table_elt_t*
+ngx_http_ipfilter_search_header(ngx_http_request_t* r, const char * name)
+{
+  ngx_list_part_t* part;
+  ngx_table_elt_t* h;
+  ngx_uint_t i, len;
+
+  len = ngx_strlen(name);
+
+  /*
+  Get the first part of the list. There is usual only one part.
+   */
+  part = &r->headers_in.headers.part;
+  h = part->elts;
+
+  /*
+  Headers list array may consist of more than one part,
+  so loop through all of it
+   */
+  for (i = 0; /* void */; i++)
+  {
+    if (i >= part->nelts)
+    {
+      if (part->next == NULL)
+      {
+        /* The last part, search is done. */
+        break;
+      }
+
+      part = part->next;
+      h = part->elts;
+      i = 0;
+    }
+
+    if (len != h[i].key.len || ngx_strncmp(h[i].key.data, name, len) != 0)
+      continue;
+
+    return &h[i];
+  }
+
+  /*
+  No headers was found
+   */
+  return NULL;
+}
+
+static ngx_int_t
+ngx_http_ipfilter_get_variable(ngx_http_request_t *r, ngx_http_variable_value_t *v, uintptr_t data)
+{
+  ngx_http_ipfilter_loc_conf_t* cf;
+
+  cf = ngx_http_get_module_loc_conf(r, ngx_http_ipfilter_module);
+
+  if (!cf || !cf->enabled || cf->redirect)
+  {
+    v->not_found = 0;
+    v->valid = 1;
+    v->no_cacheable = 0;
+    v->len = 1;
+    v->data = ngx_pcalloc(r->pool, 1);
+    if (!v->data)
+      return (NGX_ERROR);
+    *(v->data) = '1'; /* allow */
+  }
+  else
+  {
+    ngx_table_elt_t* h;
+
+    /* read value from extra header */
+    h = ngx_http_ipfilter_search_header(r, IPFILTER_X_HEADER);
+
+    if (!h)
+    {
+      v->not_found = 1;
+      NX_DEBUG(_debug_mechanics, NGX_LOG_DEBUG_HTTP, r->connection->log, 0,
+               IPFILTER_TAG " HEADER NOT FOUND|ADDR:%V|INTERNAL:%d",
+               &(r->connection->addr_text), r->internal);
+    }
+    else
+    {
+      v->not_found = 0;
+      v->valid = 1;
+      v->no_cacheable = 0;
+      v->data = h->value.data;
+      v->len = h->value.len;
+      NX_DEBUG(_debug_mechanics, NGX_LOG_DEBUG_HTTP, r->connection->log, 0,
+               IPFILTER_TAG " HEADER FOUND:%V|ADDR:%V|INTERNAL:%d",
+               &(h->value), &(r->connection->addr_text), r->internal);
+    }
+  }
+  return (NGX_OK);
 }
 
 /*
@@ -411,8 +528,21 @@ ngx_http_ipfilter_access_handler(ngx_http_request_t* r)
   /* job done */
   ctx->over = 1;
 
-  if (ctx->block)
+  if (cf->redirect)
   {
+    switch (ctx->response)
+    {
+    case db_allow:
+      NX_DEBUG(_debug_mechanics, NGX_LOG_DEBUG_HTTP, r->connection->log, 0,
+               IPFILTER_TAG " DECLINED");
+      return NGX_DECLINED;
+    case db_error:
+      ngx_log_error(NGX_LOG_EMERG, r->connection->log, 0,
+                    IPFILTER_TAG " DATABASE QUERY FAILED (%d).", errno);
+      break;
+    default:
+      break;
+    }
     cf->request_blocked++;
     NX_DEBUG(_debug_mechanics, NGX_LOG_DEBUG_HTTP, r->connection->log, 0,
              IPFILTER_TAG " BLOCKED (%l)", cf->request_blocked);
@@ -420,9 +550,43 @@ ngx_http_ipfilter_access_handler(ngx_http_request_t* r)
     /* redirect: return (NGX_HTTP_OK) */
     return rc;
   }
-
-  NX_DEBUG(_debug_mechanics, NGX_LOG_DEBUG_HTTP, r->connection->log, 0,
-           IPFILTER_TAG " DECLINED");
+  else
+  {
+    /* add extra header with response */
+    ngx_table_elt_t* h;
+    if (r->headers_in.headers.last)
+    {
+      h = ngx_list_push(&(r->headers_in.headers));
+      if (!h)
+        return (NGX_ERROR);
+      h->key.len = sizeof (IPFILTER_X_HEADER) - 1;
+      h->key.data = ngx_pcalloc(r->pool, h->key.len);
+      if (!h->key.data)
+        return (NGX_ERROR);
+      memcpy(h->key.data, IPFILTER_X_HEADER, h->key.len);
+      h->lowcase_key = h->key.data;
+      h->value.len = 1;
+      h->value.data = ngx_pcalloc(r->pool, 1);
+      switch (ctx->response)
+      {
+      case db_not_found:
+        *(h->value.data) = '0';
+        break;
+      case db_allow:
+        *(h->value.data) = '1';
+        break;
+      case db_deny:
+        *(h->value.data) = '2';
+        break;
+      default:
+        *(h->value.data) = '3';
+        ngx_log_error(NGX_LOG_EMERG, r->connection->log, 0,
+                      IPFILTER_TAG " DATABASE QUERY FAILED (%d).", errno);
+      }
+      NX_DEBUG(_debug_mechanics, NGX_LOG_DEBUG_HTTP, r->connection->log, 0,
+               IPFILTER_TAG " HEADER ADDED (%d)", ctx->response);
+    }
+  }
 
   return NGX_DECLINED;
 }

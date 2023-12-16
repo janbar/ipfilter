@@ -37,6 +37,7 @@ typedef struct
 {
   ngx_flag_t    pushed;
   ngx_flag_t    enabled;
+  ngx_flag_t    redirect;
   ngx_str_t*    denied_url;
   ngx_str_t*    db_file;
 
@@ -53,7 +54,7 @@ typedef struct
 typedef struct
 {
   ngx_flag_t over;
-  ngx_flag_t block;
+  ngx_int_t response;
 } ngx_http_request_ctx_t;
 
 #define NX_CONF_DEBUG(FEATURE, DEF, CONF, ERR, ...)   \

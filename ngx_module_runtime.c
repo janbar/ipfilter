@@ -78,21 +78,7 @@ ngx_http_ipfilter_data_parse(ngx_http_request_ctx_t* ctx,
     cidr.addr[2] = (inaddr >> 8) & 0xff;
     cidr.addr[3] = inaddr & 0xff;
     cidr.prefix = 32;
-    switch (find_record(cf->db_instance, &cidr))
-    {
-    case db_allow:
-      ctx->block = 0;
-      break;
-    case db_not_found:
-    case db_deny:
-      ctx->block = 1;
-      break;
-    case db_error:
-      ctx->block = 1;
-      ngx_log_error(NGX_LOG_EMERG, r->connection->log, 0,
-                    IPFILTER_TAG " DATABASE QUERY FAILED (%d).", errno);
-      break;
-    }
+    ctx->response = find_record(cf->db_instance, &cidr);
   }
 }
 
