@@ -65,6 +65,10 @@ Configure the module for NGINX
       ipfilter_db /etc/nginx/modules/database.db;  # path of the database file
       ...
 
+  If the denied url is not configured, the variable '$ipfilter' stores
+  the database response: 0=Not found, 1=Allow, 2=Deny, 3=Error. In other case
+  its value is always 1.
+
   4. Restart the server NGINX.
 
   At this point, the module has been enabled for the configured location(s).
