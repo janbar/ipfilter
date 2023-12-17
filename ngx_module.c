@@ -370,11 +370,12 @@ ngx_http_ipfilter_get_variable(ngx_http_request_t *r, ngx_http_variable_value_t 
   ctx = ngx_http_get_module_ctx(r, ngx_http_ipfilter_module);
   cf = ngx_http_get_module_loc_conf(r, ngx_http_ipfilter_module);
 
-  if (!cf)
-    return (NGX_ERROR);
-
-  if (cf->redirect || !ctx)
+  /* returns 1=allow in discarded context */
+  if (r->internal || !cf || !cf->enabled || !ctx)
   {
+    NX_DEBUG(_debug_mechanics, NGX_LOG_DEBUG_HTTP, r->connection->log, 0,
+             IPFILTER_TAG " GET VARIABLE(%V)|INTERNAL:%d",
+             &(r->uri), r->internal);
     v->not_found = 0;
     v->valid = 1;
     v->no_cacheable = 0;
