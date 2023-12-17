@@ -129,7 +129,7 @@ static bool parseCommand(const std::string& line)
       PRINT("EXIT                          Exit from CLI\n");
       PRINT("CREATE $1 [$2]                Create new database\n");
       PRINT("  $1 : file path (no space)\n");
-      PRINT("  $2 : segment size from 256 to 65536. The default is 256.\n");
+      PRINT("  $2 : segment size. The default is 256.\n");
       PRINT("SETNAME $name                 Rename the database (no space)\n");
       PRINT("MOUNT $1                      Mount database from binary db file\n");
       PRINT("  $1 : file path (no space)\n");
@@ -138,6 +138,8 @@ static bool parseCommand(const std::string& line)
       PRINT("DENY $CIDR                    Deny CIDR (n.n.n.n/n)\n");
       PRINT("TEST $CIDR                    Test CIDR matching (n.n.n.n/n)\n");
       PRINT("LOAD ALLOW|DENY $1            Fill database with CIDR file\n");
+      PRINT("  $1 : file path (no space)\n");
+      PRINT("EXPORT [$1]                   Export the database to output or file\n");
       PRINT("  $1 : file path (no space)\n");
       PRINT("PURGE FORCE                   Purge the database\n");
       PRINT("HELP                          Print this help\n");
@@ -169,6 +171,35 @@ static bool parseCommand(const std::string& line)
       if (g_db)
         stat_db(g_db);
     }
+    else if (token == "EXPORT")
+    {
+      if (g_db)
+      {
+        std::string filepath;
+        if (++it != tokens.end())
+        {
+          filepath.assign(*it);
+          FILE * out = ::fopen(filepath.c_str(), "w");
+          if (out)
+          {
+            if (export_db(g_db, out) < 0)
+              PERROR1("Error: Export failed (%d)\n", LASTERROR);
+            else
+              PERROR("Succeeded\n");
+            fclose(out);
+          }
+          else
+            PERROR1("Error: Create file failed (%d)\n", LASTERROR);
+        }
+        else
+        {
+          if (export_db(g_db, stdout) < 0)
+            PERROR1("Error: Export failed (%d)\n", LASTERROR);
+        }
+      }
+      else
+        PERROR("Error: Invalid context\n");
+    }
     else if (token == "PURGE")
     {
       if (++it != tokens.end() && g_db)
@@ -182,7 +213,7 @@ static bool parseCommand(const std::string& line)
         }
       }
       else
-        PERROR("Invalid context\n");
+        PERROR("Error: Invalid context\n");
     }
     else if (token == "TEST")
     {
