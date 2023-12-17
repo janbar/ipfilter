@@ -24,6 +24,8 @@ extern "C"
 {
 #endif
 
+#include <stdio.h>
+
 /* define IP4 CIDR address */
 #define ADDR_SZ 4
 typedef struct { unsigned char addr[ADDR_SZ]; int prefix; } cidr_address;
@@ -137,6 +139,13 @@ void close_db(DB ** db);
  * @return The state among allow deny empty, else error
  */
 db_response find_record(DB * db, cidr_address * cidr);
+
+/**
+ * Extract the contents of the database to a file
+ * @param db The DB handle
+ * @param out The file handle open for writing
+ */
+int export_db(DB * db, FILE * out);
 
 /*
  * utilities

@@ -844,3 +844,74 @@ int create_cidr_address_2(cidr_address * cidr,
   cidr->prefix = prefix;
   return 0;
 }
+
+static void _set_bit(unsigned char * addr, int bit_no, int v)
+{
+  int p, b;
+  if (bit_no > 0)
+  {
+    p = (bit_no - 1) / 8;
+    b = bit_no - 8 * p;
+    if (v)
+      /* on */
+      addr[p] |= (1 << (8 - b));
+    else
+      /* off */
+      addr[p] &= (0xff - (1 << (8 - b)));
+  }
+}
+
+static int _visit_node(DB * db, FILE * out, cidr_address cidr, uint32_t node_id)
+{
+  node * _node;
+
+  _node = get_node(db, node_id);
+  if (!_node)
+    return (-1); /* corruption */
+
+  /* processing next bit */
+  cidr.prefix++;
+
+  /* visit left (0) */
+  if ((_node->raw0 & LEAF))
+  {
+    _set_bit(cidr.addr, cidr.prefix, 0);
+    if (fprintf(out, "%s %hhu.%hhu.%hhu.%hhu/%d\n",
+           ((_node->raw0 & LEAF) == LEAF_DENY ? "DENY" : "ALLOW"),
+           cidr.addr[0], cidr.addr[1], cidr.addr[2], cidr.addr[3],
+           cidr.prefix) < 0)
+      return (-1);
+  }
+  else if ((_node->raw0 & ADDR))
+  {
+    _set_bit(cidr.addr, cidr.prefix, 0);
+    if (_visit_node(db, out, cidr, _node->raw0) < 0)
+      return (-1);
+  }
+
+  /* visit right (1) */
+  if ((_node->raw1 & LEAF))
+  {
+    _set_bit(cidr.addr, cidr.prefix, 1);
+    if (fprintf(out, "%s %hhu.%hhu.%hhu.%hhu/%d\n",
+           ((_node->raw1 & LEAF) == LEAF_DENY ? "DENY" : "ALLOW"),
+           cidr.addr[0], cidr.addr[1], cidr.addr[2], cidr.addr[3],
+           cidr.prefix) < 0)
+      return (-1);
+  }
+  else if ((_node->raw1 & ADDR))
+  {
+    _set_bit(cidr.addr, cidr.prefix, 1);
+    if (_visit_node(db, out, cidr, _node->raw1) < 0)
+      return (-1);
+  }
+
+  return 0;
+}
+
+int export_db(DB * db, FILE * out)
+{
+  cidr_address cidr;
+  memset(&cidr, '\0', sizeof(cidr));
+  return _visit_node(db, out, cidr, db->header->root_addr);
+}
