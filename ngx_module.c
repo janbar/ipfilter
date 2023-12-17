@@ -60,9 +60,6 @@ ngx_http_ipfilter_create_main_conf(ngx_conf_t* cf);
 static char*
 ngx_http_ipfilter_enable_loc_conf(ngx_conf_t* cf, ngx_command_t* cmd, void* conf);
 
-static ngx_table_elt_t*
-ngx_http_ipfilter_search_header(ngx_http_request_t* r, const char * name);
-
 static ngx_int_t
 ngx_http_ipfilter_get_variable(ngx_http_request_t *r, ngx_http_variable_value_t *v, uintptr_t data);
 
@@ -364,60 +361,19 @@ ngx_http_ipfilter_create_main_conf(ngx_conf_t* cf)
   return (mc);
 }
 
-static ngx_table_elt_t*
-ngx_http_ipfilter_search_header(ngx_http_request_t* r, const char * name)
-{
-  ngx_list_part_t* part;
-  ngx_table_elt_t* h;
-  ngx_uint_t i, len;
-
-  len = ngx_strlen(name);
-
-  /*
-  Get the first part of the list. There is usual only one part.
-   */
-  part = &r->headers_in.headers.part;
-  h = part->elts;
-
-  /*
-  Headers list array may consist of more than one part,
-  so loop through all of it
-   */
-  for (i = 0; /* void */; i++)
-  {
-    if (i >= part->nelts)
-    {
-      if (part->next == NULL)
-      {
-        /* The last part, search is done. */
-        break;
-      }
-
-      part = part->next;
-      h = part->elts;
-      i = 0;
-    }
-
-    if (len != h[i].key.len || ngx_strncmp(h[i].key.data, name, len) != 0)
-      continue;
-
-    return &h[i];
-  }
-
-  /*
-  No headers was found
-   */
-  return NULL;
-}
-
 static ngx_int_t
 ngx_http_ipfilter_get_variable(ngx_http_request_t *r, ngx_http_variable_value_t *v, uintptr_t data)
 {
+  ngx_http_request_ctx_t* ctx;
   ngx_http_ipfilter_loc_conf_t* cf;
 
+  ctx = ngx_http_get_module_ctx(r, ngx_http_ipfilter_module);
   cf = ngx_http_get_module_loc_conf(r, ngx_http_ipfilter_module);
 
-  if (!cf || !cf->enabled || cf->redirect)
+  if (!cf)
+    return (NGX_ERROR);
+
+  if (cf->redirect || !ctx)
   {
     v->not_found = 0;
     v->valid = 1;
@@ -427,33 +383,31 @@ ngx_http_ipfilter_get_variable(ngx_http_request_t *r, ngx_http_variable_value_t 
     if (!v->data)
       return (NGX_ERROR);
     *(v->data) = '1'; /* allow */
+    return (NGX_OK);
   }
-  else
+
+  v->not_found = 0;
+  v->valid = 1;
+  v->no_cacheable = 0;
+  v->len = 1;
+  v->data = ngx_pcalloc(r->pool, 1);
+  switch (ctx->response)
   {
-    ngx_table_elt_t* h;
-
-    /* read value from extra header */
-    h = ngx_http_ipfilter_search_header(r, IPFILTER_X_HEADER);
-
-    if (!h)
-    {
-      v->not_found = 1;
-      NX_DEBUG(_debug_mechanics, NGX_LOG_DEBUG_HTTP, r->connection->log, 0,
-               IPFILTER_TAG " HEADER NOT FOUND|ADDR:%V|INTERNAL:%d",
-               &(r->connection->addr_text), r->internal);
-    }
-    else
-    {
-      v->not_found = 0;
-      v->valid = 1;
-      v->no_cacheable = 0;
-      v->data = h->value.data;
-      v->len = h->value.len;
-      NX_DEBUG(_debug_mechanics, NGX_LOG_DEBUG_HTTP, r->connection->log, 0,
-               IPFILTER_TAG " HEADER FOUND:%V|ADDR:%V|INTERNAL:%d",
-               &(h->value), &(r->connection->addr_text), r->internal);
-    }
+  case db_not_found:
+    *(v->data) = '0';
+    break;
+  case db_allow:
+    *(v->data) = '1';
+    break;
+  case db_deny:
+    *(v->data) = '2';
+    break;
+  default:
+    *(v->data) = '3';
+    ngx_log_error(NGX_LOG_ALERT, r->connection->log, 0,
+                  IPFILTER_TAG " DATABASE QUERY FAILED (%d).", errno);
   }
+
   return (NGX_OK);
 }
 
@@ -537,7 +491,7 @@ ngx_http_ipfilter_access_handler(ngx_http_request_t* r)
                IPFILTER_TAG " DECLINED");
       return NGX_DECLINED;
     case db_error:
-      ngx_log_error(NGX_LOG_EMERG, r->connection->log, 0,
+      ngx_log_error(NGX_LOG_ALERT, r->connection->log, 0,
                     IPFILTER_TAG " DATABASE QUERY FAILED (%d).", errno);
       break;
     default:
@@ -549,43 +503,6 @@ ngx_http_ipfilter_access_handler(ngx_http_request_t* r)
     rc = ngx_http_output_forbidden_page(ctx, r, cf);
     /* redirect: return (NGX_HTTP_OK) */
     return rc;
-  }
-  else
-  {
-    /* add extra header with response */
-    ngx_table_elt_t* h;
-    if (r->headers_in.headers.last)
-    {
-      h = ngx_list_push(&(r->headers_in.headers));
-      if (!h)
-        return (NGX_ERROR);
-      h->key.len = sizeof (IPFILTER_X_HEADER) - 1;
-      h->key.data = ngx_pcalloc(r->pool, h->key.len);
-      if (!h->key.data)
-        return (NGX_ERROR);
-      memcpy(h->key.data, IPFILTER_X_HEADER, h->key.len);
-      h->lowcase_key = h->key.data;
-      h->value.len = 1;
-      h->value.data = ngx_pcalloc(r->pool, 1);
-      switch (ctx->response)
-      {
-      case db_not_found:
-        *(h->value.data) = '0';
-        break;
-      case db_allow:
-        *(h->value.data) = '1';
-        break;
-      case db_deny:
-        *(h->value.data) = '2';
-        break;
-      default:
-        *(h->value.data) = '3';
-        ngx_log_error(NGX_LOG_EMERG, r->connection->log, 0,
-                      IPFILTER_TAG " DATABASE QUERY FAILED (%d).", errno);
-      }
-      NX_DEBUG(_debug_mechanics, NGX_LOG_DEBUG_HTTP, r->connection->log, 0,
-               IPFILTER_TAG " HEADER ADDED (%d)", ctx->response);
-    }
   }
 
   return NGX_DECLINED;
