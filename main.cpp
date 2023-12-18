@@ -44,6 +44,7 @@ static const char * getCmdOption(char **begin, char **end, const std::string& op
 static void readInStream();
 
 int load_cidr_file(DB * db, const char * filepath, db_rule rule);
+int load_rule_file(DB * db, const char * filepath);
 
 static DB * g_db = nullptr;
 
@@ -126,23 +127,31 @@ static bool parseCommand(const std::string& line)
     {}
     else if (token == "HELP")
     {
-      PRINT("EXIT                          Exit from CLI\n");
-      PRINT("CREATE $1 [$2]                Create new database\n");
-      PRINT("  $1 : file path (no space)\n");
-      PRINT("  $2 : segment size. The default is 256.\n");
-      PRINT("SETNAME $name                 Rename the database (no space)\n");
-      PRINT("MOUNT $1                      Mount database from binary db file\n");
-      PRINT("  $1 : file path (no space)\n");
-      PRINT("STATUS                        Show statistics of the database\n");
-      PRINT("ALLOW $CIDR                   Allow CIDR (n.n.n.n/n)\n");
-      PRINT("DENY $CIDR                    Deny CIDR (n.n.n.n/n)\n");
-      PRINT("TEST $CIDR                    Test CIDR matching (n.n.n.n/n)\n");
-      PRINT("LOAD ALLOW|DENY $1            Fill database with CIDR file\n");
-      PRINT("  $1 : file path (no space)\n");
-      PRINT("EXPORT [$1]                   Export the database to output or file\n");
-      PRINT("  $1 : file path (no space)\n");
-      PRINT("PURGE FORCE                   Purge the database\n");
-      PRINT("HELP                          Print this help\n");
+      PRINT("EXIT\n");
+      PRINT("  Exit from CLI.\n\n");
+      PRINT("CREATE {file path} [seg size]\n");
+      PRINT("  Create new database. The default seg size is 256.\n\n");
+      PRINT("SETNAME {name}\n");
+      PRINT("  Rename the database.\n\n");
+      PRINT("MOUNT {file path}\n");
+      PRINT("  Mount database from binary db file.\n\n");
+      PRINT("STATUS\n");
+      PRINT("  Show statistics of the database.\n\n");
+      PRINT("ALLOW {CIDR}\n");
+      PRINT("  Insert a rule allow CIDR (n.n.n.n/n).\n\n");
+      PRINT("DENY {CIDR}\n");
+      PRINT("  Insert a rule deny CIDR (n.n.n.n/n).\n\n");
+      PRINT("TEST {CIDR}\n");
+      PRINT("  Test matching for CIDR (n.n.n.n/n)\n\n");
+      PRINT("LOAD ALLOW|DENY {file path}\n");
+      PRINT("  Fill database with contents of CIDR file.\n\n");
+      PRINT("LOAD RULE {file path}\n");
+      PRINT("  Fill database with contents of rules file.\n\n");
+      PRINT("EXPORT [file path]\n");
+      PRINT("  Export the database rules to output or file.\n\n");
+      PRINT("PURGE FORCE\n");
+      PRINT("  Clear the database.\n\n");
+      PRINT("Type HELP to print this help.\n");
       PRINT("\n");
     }
     else if (token == "CREATE")
@@ -319,6 +328,12 @@ static bool parseCommand(const std::string& line)
             r = load_cidr_file(g_db, param.c_str(), rule_deny);
             d = timestamp() - d;
           }
+          else if (rule == "RULE")
+          {
+            d = timestamp();
+            r = load_rule_file(g_db, param.c_str());
+            d = timestamp() - d;
+          }
           if (r == 0)
             PRINT1("Loaded, elap: %f sec\n", d);
           else
@@ -469,6 +484,67 @@ int load_cidr_file(DB * db, const char * filepath, db_rule rule)
     if (token.at(0) == '#')
       continue;
     /* parse CIDR address */
+    cidr_address adr;
+    if (create_cidr_address(&adr, token.c_str()) < 0)
+      break;
+    if (insert_cidr(db, &adr, rule) == db_error)
+      break;
+    if (!(c & 0xff))
+    {
+      PRINT(".");
+      FLUSHOUT();
+    }
+    ++c;
+  }
+  PRINT1(" %u\n", c);
+  fclose(file);
+  if (c > 0)
+    db_updated(db);
+  if (r == 0)
+    return 0;
+  line[r] = '\0';
+  PERROR2("ERROR: Insertion failed on '%s' at line %d.\n", line, l);
+  return -(EINVAL);
+}
+
+int load_rule_file(DB * db, const char * filepath)
+{
+  FILE* file = fopen(filepath, "r");
+  char line[256];
+  unsigned r = 0, l = 0, c = 0;
+  if (!file)
+    return -(ENOENT);
+  while ((r = _readln(line, sizeof (line) - 1, file)))
+  {
+    ++l; /* for debug */
+    /* read line must be terminated by CTRL+N */
+    if (line[r - 1] != '\n')
+      break;
+    /* convert to string ending with zero */
+    line[r - 1] = '\0';
+    /* parse line */
+    std::vector<std::string> tokens;
+    tokenize(line, " ", tokens, true);
+    std::vector<std::string>::const_iterator it = tokens.begin();
+    if (it == tokens.end())
+      continue;
+    std::string token(*it);
+    /* discard comment or empty line */
+    if (token.at(0) == '#')
+      continue;
+    /* parse RULE */
+    db_rule rule;
+    upstr(token);
+    if (token == "ALLOW")
+      rule = rule_allow;
+    else if (token == "DENY")
+      rule = rule_deny;
+    else
+      break;
+    /* parse CIDR address */
+    if (it == tokens.end())
+      break;
+    token.assign(*(++it));
     cidr_address adr;
     if (create_cidr_address(&adr, token.c_str()) < 0)
       break;
