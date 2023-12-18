@@ -18,7 +18,7 @@
 
 /**
  * DATABASE CONCEPT
- *   The database store 2 types of chained structure: the data tree and
+ *   The database stores 2 types of chained structure: the data tree and
  *   the free list. Those structures are similar, meaning a sub-tree of data
  *   can be linked in the free list.
  *   This allows for quick updating and deleting. Insertion is just as fast,
@@ -701,17 +701,25 @@ db_response find_record(DB * db, cidr_address * cidr)
 void purge_db(DB * db)
 {
   unsigned s;
-  node * seg = db->data;
+  node * seg;
   db_header * header = db->header;
 
-  db->data->raw0 = 0;
-  db->data->raw1 = 0;
+  /* at least one segment should be initialized, else the db is invalid */
+  if (db->cache.seg_nb < 1)
+    return;
+
+  /* reset the root node now */
+  seg = get_node(db, 0);
+  seg->raw0 = 0;
+  seg->raw1 = 0;
+  /* reset freelist */
   header->free_addr = 0;
 
-  for (s = 0; s < db->cache.seg_nb; ++s)
+  /* clear all segments starting from last */
+  seg = db->data + ((db->cache.seg_nb - 1) * db->cache.seg_sz);
+  for (s = db->cache.seg_nb; s > 0 ; --s)
   {
-    /* seg no start from 1 */
-    uint32_t addr = ((s + 1) << 16);
+    uint32_t addr = (s << 16);
     node * _node = seg;
     unsigned n;
     /* chain all members on front of the freelist */
@@ -726,7 +734,7 @@ void purge_db(DB * db)
     _node->raw1 = 0;
     header->free_addr = addr;
     /* move to next segment */
-    seg += db->cache.seg_sz;
+    seg -= db->cache.seg_sz;
   }
   new_node(db, &(header->root_addr));
 }
