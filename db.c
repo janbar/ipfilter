@@ -377,9 +377,8 @@ static node * new_node(DB * db, uint32_t * node_id)
   /* get node from freelist */
   if (header->free_addr)
   {
-    /* chain the new node (ADDR) */
-    *node_id = header->free_addr;
-    node * freenode = get_node(db, *node_id);
+    uint32_t freeaddr = header->free_addr;
+    node * freenode = get_node(db, freeaddr);
 
     if (freenode->raw0 & ADDR)
     {
@@ -403,9 +402,11 @@ static node * new_node(DB * db, uint32_t * node_id)
       header->free_addr = freenode->raw1 & ADDR;
     }
 
-    /* clear the new node before returning */
+    /* clear the new node */
     freenode->raw0 = 0;
     freenode->raw1 = 0;
+    /* chain the new node */
+    *node_id = freeaddr;
     return freenode;
   }
   if (add_segment(db) > 0)
