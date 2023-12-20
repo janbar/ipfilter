@@ -77,14 +77,19 @@ Configure the module for NGINX
 
   location / {
       ipfilter_enabled;                            # enable the module
-      ipfilter_denied_url "/403.html";             # denied url
       ipfilter_db /etc/nginx/modules/database.db;  # path of the database file
+      ipfilter_denied_url "/403.html";             # denied url
       ...
 
   If the denied url is not configured, you can test the variable '$ipfilter'
   to rewrite the flow. It contains one of the following values:
 
-     0=Not found, 1=Allow, 2=Deny or 3=Error.
+      0=Not found, 1=Allow, 2=Deny or 3=Error.
+
+  The directive could be as follows.
+
+      if ($ipfilter != 1) { return 403; }
+      ...
 
   4. Restart the server NGINX.
 
