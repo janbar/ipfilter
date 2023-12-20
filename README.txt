@@ -7,8 +7,24 @@ with the following format:
 
   nnn.nnn.nnn.nnn/pp
 
-In addition, database operations such as insert, update or delete are extremely
-fast.
+The database can be used for other purposes than the nginx module. Here I
+present its use with the module.
+
+About the database
+==================
+
+The data format is binary form and optimized to store a bitmap tree. The search
+time is constant and do not depends of the number of rules. Typical benchmark
+with a database filled with 1 million rules report an average response time less
+than 10 usec. In addition, database operations such as insert, update or delete
+are extremely fast.
+
+The only limit in terms of number of rules is the size of the database and the
+memory available on the system. As an example, load all country subnets of US
+UK DE and FR, so 500K rules (Dec 2023), increases the database to 6 MB.
+
+The database is administred using the command line 'ipfiltercli'. Loading or
+updating the rules can be made on the fly without need to stop consumers.
 
 Create a database
 =================
@@ -74,7 +90,7 @@ Configure the module for NGINX
 
   At this point, the module has been enabled for the configured location(s).
   In the given example, only the request with allowed IP in the database are
-  allowed to browse resources. Others are redirected to the denied url.   
+  allowed to browse resources. Others are redirected to the denied url.
 
 Update the database
 ===================
@@ -95,5 +111,4 @@ Update the database
   allow  10.1.0.0/16
 
   Notes:
-  Updates are applied instantly. 
-
+  Updates are applied instantly.
