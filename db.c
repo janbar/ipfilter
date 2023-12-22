@@ -66,6 +66,7 @@
 #include <sys/mman.h>
 #include <sys/stat.h>
 #include <inttypes.h>
+#include <arpa/inet.h>
 
 #define DBTAG_LEN 4
 static const char * g_dbtag = "IPF4";
@@ -84,6 +85,21 @@ static const int g_indianness = 0xFF000000;
 
 #define LEAF_VALUE(u)   ((db_response)(((u) >> 30) & 0x3))
 
+#define V4MAPPED_1BIT   (8 * (ADDR_SZ - 4))
+
+#define ADDR_IS_V4MAPPED(a) (\
+  (*(const uint32_t *)(const void *)(&(a[0])) == 0) && \
+  (*(const uint32_t *)(const void *)(&(a[4])) == 0) && \
+  (*(const uint32_t *)(const void *)(&(a[8])) == ntohl(0x0000ffff)))
+
+static const unsigned char addr4_init[] = {
+  0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+  0x00, 0x00, 0xff, 0xff, 0x00, 0x00, 0x00, 0x00 };
+
+static const unsigned char addr6_init[] = {
+  0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+  0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00 };
+
 typedef struct
 {
   char      tag[4];
@@ -96,8 +112,8 @@ typedef struct
   uint16_t  seg_nb;         /* nb extents */
   uint16_t  seg_mask;       /* id range mask */
   uint32_t  free_addr;      /* front of freelist (node addr) */
-  uint32_t  root_addr;      /* addr of the root node */
-  char      _padding[4];    /* reserved */
+  uint32_t  root4_addr;     /* addr of the root node for ipv4 tree */
+  uint32_t  root6_addr;     /* addr of the root node for ipv6 tree */
 } db_header;
 
 typedef struct
@@ -346,28 +362,22 @@ static int add_segment(DB * db)
  * Returns a pointer to node
  * WARNING: no check of the vector address is done, therefore the given value
  * must be checked before calling this: i.e (node_id & ADDR) != 0.
- * Calling for 0 will return the root node.
  */
 static node * get_node(DB * db, uint32_t node_id)
 {
-  if (node_id != 0)
+  uint16_t seg_no = (node_id >> 16) & SEG_RANGE;
+  uint16_t pos_no = node_id & NOD_RANGE;
+  if (seg_no > db->cache.seg_nb)
   {
-    uint16_t seg_no = (node_id >> 16) & SEG_RANGE;
-    uint16_t pos_no = node_id & NOD_RANGE;
-    if (seg_no > db->cache.seg_nb)
-    {
-      /* it is a corruption else the database has been extended */
-      if (seg_no > db->header->seg_nb ||
-              _mmap_database(&(db->mmap_ctx)) < 0)
-        return NULL;
-      /* refresh cache */
-      db->cache.seg_nb = db->header->seg_nb;
-    }
-    /* seg no start from 1 */
-    return &(db->data[(seg_no - 1) * db->cache.seg_sz + pos_no]);
+    /* it is a corruption else the database has been extended */
+    if (seg_no > db->header->seg_nb ||
+            _mmap_database(&(db->mmap_ctx)) < 0)
+      return NULL;
+    /* refresh cache */
+    db->cache.seg_nb = db->header->seg_nb;
   }
-  /* return the root node */
-  return get_node(db, db->header->root_addr);
+  /* seg no start from 1 */
+  return &(db->data[(seg_no - 1) * db->cache.seg_sz + pos_no]);
 }
 
 static node * new_node(DB * db, uint32_t * node_id)
@@ -470,7 +480,9 @@ DB * create_db(const char * filepath, const char * db_name, unsigned seg_size)
   tmp->seg_nb = 0;
   tmp->seg_mask = seg_mask;
   tmp->free_addr = 0;
-  tmp->root_addr = ADDR; /* invalidate the db until creation is complete */
+  /* invalidate the db until creation is complete */
+  tmp->root4_addr = ADDR;
+  tmp->root6_addr = ADDR;
 
   file = fopen(filepath, "wb");
   if (!file)
@@ -491,7 +503,8 @@ DB * create_db(const char * filepath, const char * db_name, unsigned seg_size)
     return NULL;
   }
   /* set the root node */
-  new_node(db, &(db->header->root_addr));
+  new_node(db, &(db->header->root4_addr));
+  new_node(db, &(db->header->root6_addr));
   return db;
 fail1:
   fclose(file);
@@ -511,7 +524,8 @@ void stat_db(DB * db)
   printf("seg_size   : %u\n", SEGMENT_SIZE(header->seg_mask));
   printf("seg_count  : %u\n", (unsigned)header->seg_nb);
   printf("freelist   : %08x\n", header->free_addr);
-  printf("rootnode   : %08x\n", header->root_addr);
+  printf("rootnode4  : %08x\n", header->root4_addr);
+  printf("rootnode6  : %08x\n", header->root6_addr);
 }
 
 void close_db(DB ** db)
@@ -542,11 +556,22 @@ static int _give_back_tree(DB * db, uint32_t node_id)
 
 static db_response _create_record(DB * db, cidr_address * cidr, uint32_t leaf_mask)
 {
-  node * n = get_node(db, 0);
+  node * n;
   int b, v = 0, ln = cidr->prefix - 1;
   uint32_t inherit = 0;
 
-  for (b = 0; b < cidr->prefix; ++b)
+  if (ADDR_IS_V4MAPPED(cidr->addr))
+  {
+    b = V4MAPPED_1BIT;
+    n = get_node(db, db->header->root4_addr);
+  }
+  else
+  {
+    b = 0;
+    n = get_node(db, db->header->root6_addr);
+  }
+
+  for (; b < cidr->prefix; ++b)
   {
     int c = b >> 3;
     int d = 7 - b + (c << 3);
@@ -612,7 +637,7 @@ static db_response _create_record(DB * db, cidr_address * cidr, uint32_t leaf_ma
     return db_error;
 
   /* make the leaf */
-  if (ln < 0)
+  if (ln < b)
   {
     if (_give_back_tree(db, n->raw0) < 0 || _give_back_tree(db, n->raw1) < 0)
       return db_error;
@@ -658,10 +683,21 @@ void db_updated(DB * db)
 
 db_response find_record(DB * db, cidr_address * cidr)
 {
-  node * n = get_node(db, 0);
+  node * n;
   int b, v = 0;
 
-  for (b = 0; b < cidr->prefix; ++b)
+  if (ADDR_IS_V4MAPPED(cidr->addr))
+  {
+    b = V4MAPPED_1BIT;
+    n = get_node(db, db->header->root4_addr);
+  }
+  else
+  {
+    b = 0;
+    n = get_node(db, db->header->root6_addr);
+  }
+
+  for (; b < cidr->prefix; ++b)
   {
     int c = b >> 3;
     int p = 7 - b + (c << 3);
@@ -709,8 +745,12 @@ void purge_db(DB * db)
   if (db->cache.seg_nb < 1)
     return;
 
-  /* reset the root node now */
-  seg = get_node(db, 0);
+  /* reset the ip4 root node now */
+  seg = get_node(db, header->root4_addr);
+  seg->raw0 = 0;
+  seg->raw1 = 0;
+  /* reset the ip6 root node now */
+  seg = get_node(db, header->root6_addr);
   seg->raw0 = 0;
   seg->raw1 = 0;
   /* reset freelist */
@@ -737,7 +777,8 @@ void purge_db(DB * db)
     /* move to next segment */
     seg -= db->cache.seg_sz;
   }
-  new_node(db, &(header->root_addr));
+  new_node(db, &(header->root4_addr));
+  new_node(db, &(header->root6_addr));
 }
 
 static int _read_db_header(db_header * header, FILE * file)
@@ -830,28 +871,134 @@ fail0:
   return NULL;
 }
 
-int create_cidr_address(cidr_address * cidr, const char * cidr_str)
+static int _dec_to_num(const char *str)
 {
-  if (sscanf(cidr_str, "%hhd.%hhd.%hhd.%hhd/%d",
-             &(cidr->addr[0]), &(cidr->addr[1]), &(cidr->addr[2]),
-             &(cidr->addr[3]), &(cidr->prefix)) != 5)
-    return -(EINVAL);
-  if (cidr->prefix < 0 || cidr->prefix > (8 * ADDR_SZ))
-    return -(EINVAL);
-  return 0;
+  int val = 0;
+  while (*str)
+  {
+    if (*str < '0' || *str > '9')
+      break;
+    val *= 10;
+    val += ((*str) - '0');
+    str++;
+  }
+  return val;
+}
+
+static int _hex_to_num(const char *str)
+{
+  int val = 0;
+  while (*str)
+  {
+    if (*str >= '0' && *str <= '9')
+      val = (val << 4) + (*str - '0');
+    else if (*str >= 'A' && *str <= 'F')
+      val = (val << 4) + (*str - 'A' + 10);
+    else if (*str >= 'a' && *str <= 'f')
+      val = (val << 4) + (*str - 'a' + 10);
+    else
+      break;
+    ++str;
+  }
+  return val;
 }
 
 int create_cidr_address_2(cidr_address * cidr,
                           const char * addr_str, int prefix)
 {
-  if (sscanf(addr_str, "%hhd.%hhd.%hhd.%hhd",
-             &(cidr->addr[0]), &(cidr->addr[1]), &(cidr->addr[2]),
-             &(cidr->addr[3])) != 4)
-    return -(EINVAL);
-  if (prefix < 0 || prefix > (8 * ADDR_SZ))
-    return -(EINVAL);
+  int i, len;
+  const char * p;
+
+  len = strlen(addr_str);
+  p = addr_str + len;
+  while (*(--p) != '.' && p > addr_str);
+
+  /* parse ip4 address string */
+  if (p > addr_str)
+  {
+    while (*(--p) != ':' && p > addr_str);
+    if (*p == ':')
+      ++p;
+    else
+      prefix += V4MAPPED_1BIT;
+
+    memcpy(cidr->addr, addr4_init, ADDR_SZ);
+    /* front to back */
+    i = 12;
+    for (;;)
+    {
+      int val = _dec_to_num(p);
+      cidr->addr[i] = val & 0xff;
+      ++i;
+      while (*(++p) != '.' && *p != '\0');
+      if (*p == '\0' || i >= ADDR_SZ)
+        break;
+      ++p;
+    }
+    if (i < ADDR_SZ)
+      return -(EINVAL);
+  }
+  /* parse ip6 address string */
+  else
+  {
+    memcpy(cidr->addr, addr6_init, ADDR_SZ);
+    /* front to back */
+    i = 0;
+    for (;;)
+    {
+      if (*p == ':')
+        break;
+      int val = _hex_to_num(p);
+      cidr->addr[i] = (val >> 8) & 0xff;
+      cidr->addr[i+1] = val & 0xff;
+      i += 2;
+      while (*(++p) != ':' && *p != '\0');
+      if (*p == '\0' || i >= ADDR_SZ)
+        break;
+      ++p;
+    }
+    /* back to front */
+    if (i < ADDR_SZ)
+    {
+      p = addr_str + len - 1;
+      while (*p != ':') --p;
+      i = ADDR_SZ - 2;
+      for (;;)
+      {
+        int val = _hex_to_num(p + 1);
+        cidr->addr[i] = (val >> 8) & 0xff;
+        cidr->addr[i+1] = val & 0xff;
+        i -= 2;
+        while (*(--p) != ':' && p > addr_str);
+        if (*(p + 1) == ':' || p == addr_str)
+          break;
+      }
+    }
+  }
+
   cidr->prefix = prefix;
   return 0;
+}
+
+int create_cidr_address(cidr_address * cidr, const char * cidr_str)
+{
+  int prefix;
+  const char * p;
+
+  p = cidr_str + strlen(cidr_str) - 1;
+  while (*(--p) != '/' && p > cidr_str);
+  if (p == cidr_str)
+    return -(EINVAL);
+  prefix = _dec_to_num(p + 1);
+  if (prefix < 0 || prefix > (8 * ADDR_SZ))
+    return -(EINVAL);
+  return create_cidr_address_2(cidr, cidr_str, prefix);
+}
+
+void init_address_ipv4_mapped(cidr_address * cidr)
+{
+  memcpy(cidr->addr, addr4_init, ADDR_SZ);
+  cidr->prefix = 128;
 }
 
 static void _set_bit(unsigned char * addr, int bit_no, int v)
@@ -870,7 +1017,16 @@ static void _set_bit(unsigned char * addr, int bit_no, int v)
   }
 }
 
-static int _visit_node(DB * db, FILE * out, cidr_address cidr, uint32_t node_id)
+static int _print_rule_ip4(FILE * out, cidr_address * cidr, uint32_t data)
+{
+  fputs(((data & LEAF) == LEAF_ALLOW ? "ALLOW " : "DENY "), out);
+  return fprintf(out, "%hhu.%hhu.%hhu.%hhu/%d\n",
+                 cidr->addr[ADDR_SZ - 4], cidr->addr[ADDR_SZ - 3],
+                 cidr->addr[ADDR_SZ - 2], cidr->addr[ADDR_SZ - 1],
+                 cidr->prefix - V4MAPPED_1BIT);
+}
+
+static int _visit_node4(DB * db, FILE * out, cidr_address cidr, uint32_t node_id)
 {
   node * _node;
 
@@ -885,16 +1041,13 @@ static int _visit_node(DB * db, FILE * out, cidr_address cidr, uint32_t node_id)
   if ((_node->raw0 & LEAF))
   {
     _set_bit(cidr.addr, cidr.prefix, 0);
-    if (fprintf(out, "%s %hhu.%hhu.%hhu.%hhu/%d\n",
-           ((_node->raw0 & LEAF) == LEAF_DENY ? "DENY" : "ALLOW"),
-           cidr.addr[0], cidr.addr[1], cidr.addr[2], cidr.addr[3],
-           cidr.prefix) < 0)
+    if (_print_rule_ip4(out, &cidr, _node->raw0) < 0)
       return (-1);
   }
   else if ((_node->raw0 & ADDR))
   {
     _set_bit(cidr.addr, cidr.prefix, 0);
-    if (_visit_node(db, out, cidr, _node->raw0) < 0)
+    if (_visit_node4(db, out, cidr, _node->raw0) < 0)
       return (-1);
   }
 
@@ -902,16 +1055,88 @@ static int _visit_node(DB * db, FILE * out, cidr_address cidr, uint32_t node_id)
   if ((_node->raw1 & LEAF))
   {
     _set_bit(cidr.addr, cidr.prefix, 1);
-    if (fprintf(out, "%s %hhu.%hhu.%hhu.%hhu/%d\n",
-           ((_node->raw1 & LEAF) == LEAF_DENY ? "DENY" : "ALLOW"),
-           cidr.addr[0], cidr.addr[1], cidr.addr[2], cidr.addr[3],
-           cidr.prefix) < 0)
+    if (_print_rule_ip4(out, &cidr, _node->raw1) < 0)
       return (-1);
   }
   else if ((_node->raw1 & ADDR))
   {
     _set_bit(cidr.addr, cidr.prefix, 1);
-    if (_visit_node(db, out, cidr, _node->raw1) < 0)
+    if (_visit_node4(db, out, cidr, _node->raw1) < 0)
+      return (-1);
+  }
+
+  return 0;
+}
+
+static int _print_rule_ip6(FILE * out, cidr_address * cidr, uint32_t data)
+{
+  int i, compressing = 0, compressed = 0;
+  uint16_t s = 0;
+
+  fputs(((data & LEAF) == LEAF_DENY ? "DENY " : "ALLOW "), out);
+
+  for (i = 0; i < ADDR_SZ; i += 2)
+  {
+    s = cidr->addr[i] << 8;
+    s += cidr->addr[i+1];
+    if (s || compressed)
+    {
+      if (compressing)
+      {
+        compressed = 1;
+        compressing = 0;
+        fputs("::", out);
+      }
+      else if (i)
+        fputc(':', out);
+      fprintf(out, "%x", s);
+    }
+    else
+      compressing = 1;
+  }
+
+  if (compressing)
+    fputs("::", out);
+
+  return fprintf(out, "/%d\n", cidr->prefix);
+}
+
+static int _visit_node6(DB * db, FILE * out, cidr_address cidr, uint32_t node_id)
+{
+  node * _node;
+
+  _node = get_node(db, node_id);
+  if (!_node)
+    return (-1); /* corruption */
+
+  /* processing next bit */
+  cidr.prefix++;
+
+  /* visit left (0) */
+  if ((_node->raw0 & LEAF))
+  {
+    _set_bit(cidr.addr, cidr.prefix, 0);
+    if (_print_rule_ip6(out, &cidr, _node->raw0) < 0)
+      return (-1);
+  }
+  else if ((_node->raw0 & ADDR))
+  {
+    _set_bit(cidr.addr, cidr.prefix, 0);
+    if (_visit_node6(db, out, cidr, _node->raw0) < 0)
+      return (-1);
+  }
+
+  /* visit right (1) */
+  if ((_node->raw1 & LEAF))
+  {
+    _set_bit(cidr.addr, cidr.prefix, 1);
+    if (_print_rule_ip6(out, &cidr, _node->raw1) < 0)
+      return (-1);
+  }
+  else if ((_node->raw1 & ADDR))
+  {
+    _set_bit(cidr.addr, cidr.prefix, 1);
+    if (_visit_node6(db, out, cidr, _node->raw1) < 0)
       return (-1);
   }
 
@@ -920,7 +1145,15 @@ static int _visit_node(DB * db, FILE * out, cidr_address cidr, uint32_t node_id)
 
 int export_db(DB * db, FILE * out)
 {
+  int r = 0;
   cidr_address cidr;
-  memset(&cidr, '\0', sizeof(cidr));
-  return _visit_node(db, out, cidr, db->header->root_addr);
+
+  memcpy(cidr.addr, addr4_init, ADDR_SZ);
+  cidr.prefix = V4MAPPED_1BIT;
+  r |= _visit_node4(db, out, cidr, db->header->root4_addr);
+
+  memcpy(cidr.addr, addr6_init, ADDR_SZ);
+  cidr.prefix = 0;
+  r |= _visit_node6(db, out, cidr, db->header->root6_addr);
+  return r;
 }

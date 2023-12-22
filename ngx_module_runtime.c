@@ -24,6 +24,7 @@ ngx_http_ipfilter_data_parse(ngx_http_request_ctx_t* ctx,
                              ngx_http_request_t* r,
                              ngx_http_ipfilter_loc_conf_t* cf)
 {
+  cidr_address cidr;
   ngx_addr_t addr;
   in_addr_t inaddr;
   struct sockaddr_in *sin;
@@ -47,39 +48,27 @@ ngx_http_ipfilter_data_parse(ngx_http_request_ctx_t* ctx,
   case AF_INET6:
     inaddr6 = &((struct sockaddr_in6 *) addr.sockaddr)->sin6_addr;
     p = inaddr6->s6_addr;
-    if (IN6_IS_ADDR_V4MAPPED(inaddr6))
-    {
-      inaddr = p[12] << 24;
-      inaddr += p[13] << 16;
-      inaddr += p[14] << 8;
-      inaddr += p[15];
-    }
-    else
-      inaddr = INADDR_NONE;
+    memcpy(cidr.addr, p, 16);
+    cidr.prefix = 128;
     break;
 #endif
-  default: /* AF_INET */
+  case AF_INET:
     sin = (struct sockaddr_in *) addr.sockaddr;
     inaddr = ntohl(sin->sin_addr.s_addr);
+    init_address_ipv4_mapped(&cidr);
+    cidr.addr[12] = (inaddr >> 24) & 0xff;
+    cidr.addr[13] = (inaddr >> 16) & 0xff;
+    cidr.addr[14] = (inaddr >> 8) & 0xff;
+    cidr.addr[15] = inaddr & 0xff;
     break;
-  }
-
-  if (inaddr == INADDR_NONE)
-  {
+  default:
     ngx_log_error(NGX_LOG_NOTICE, r->connection->log, 0,
               IPFILTER_TAG " Unable to process address family=%d.",
               r->connection->sockaddr->sa_family);
+    return;
   }
-  else
-  {
-    cidr_address cidr;
-    cidr.addr[0] = (inaddr >> 24) & 0xff;
-    cidr.addr[1] = (inaddr >> 16) & 0xff;
-    cidr.addr[2] = (inaddr >> 8) & 0xff;
-    cidr.addr[3] = inaddr & 0xff;
-    cidr.prefix = 32;
-    ctx->response = find_record(cf->db_instance, &cidr);
-  }
+
+  ctx->response = find_record(cf->db_instance, &cidr);
 }
 
 ngx_int_t

@@ -26,9 +26,13 @@ extern "C"
 
 #include <stdio.h>
 
-/* define IP4 CIDR address */
-#define ADDR_SZ 4
-typedef struct { unsigned char addr[ADDR_SZ]; int prefix; } cidr_address;
+/* define CIDR address */
+#define ADDR_SZ     16
+typedef struct
+{
+  unsigned char addr[ADDR_SZ];  /* IPv6 or IPv4 mapped IPv6 */
+  int prefix;                   /* subnet bit mask (0..128) */
+} cidr_address;
 
 /* define opaque DB struct */
 typedef struct DB DB;
@@ -170,6 +174,8 @@ int create_cidr_address(cidr_address * cidr, const char * cidr_str);
  */
 int create_cidr_address_2(cidr_address * cidr,
         const char * addr_str, int prefix);
+
+void init_address_ipv4_mapped(cidr_address * cidr);
 
 #ifdef __cplusplus
 }
