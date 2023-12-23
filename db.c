@@ -1081,18 +1081,26 @@ static int _print_rule_ip6(FILE * out, cidr_address * cidr, uint32_t data)
     s += cidr->addr[i+1];
     if (s || compressed)
     {
-      if (compressing)
+      if (compressing > 1)
       {
         compressed = 1;
         compressing = 0;
         fputs("::", out);
       }
+      else if (compressing)
+      {
+        compressing = 0;
+        if (i > 2)
+          fputc(':', out);
+        fputs("0:", out);
+      }
       else if (i)
         fputc(':', out);
+
       fprintf(out, "%x", s);
     }
     else
-      compressing = 1;
+      ++compressing;
   }
 
   if (compressing)
