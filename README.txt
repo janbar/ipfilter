@@ -5,7 +5,9 @@ The module uses a very efficient algorithm to match an IP address with a large
 number of CIDR addresses. It uses a database, filled with list of CIDR records
 with the following format:
 
-  nnn.nnn.nnn.nnn/pp
+  IPv4:         nnn.nnn.nnn.nnn/pp
+  IPv6:         x:x::x:x/ppp
+  IPv4 mapped:  ::FFFF:nnn.nnn.nnn.nnn/ppp
 
 The database can be used for other purposes than the nginx module. Here I
 present its use with the module.
