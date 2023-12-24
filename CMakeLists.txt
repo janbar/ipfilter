@@ -9,16 +9,25 @@ set(CMAKE_MODULE_PATH "${PROJECT_SOURCE_DIR}/cmake")
 
 set(NGINX_SOURCE_DIR "" CACHE STRING "Path to the sources of NGINX")
 
-set(cli_SOURCES main.cpp db.c)
-set(cli_HEADERS db.h)
+set(db_SOURCES db.c)
+set(db_HEADERS db.h)
 
-add_executable(ipfiltercli ${cli_SOURCES})
+add_library(db STATIC ${db_SOURCES})
+add_executable(ipfiltercli main.cpp ${db_SOURCES})
 
 if(${CMAKE_SYSTEM_NAME} STREQUAL "SunOS")
   find_library(SOCKET socket REQUIRED)
   target_link_libraries(ipfiltercli socket)
 endif()
 
+# tests
+option(BUILD_TESTING "Make tests" ON)
+include(CTest)
+if(BUILD_TESTING)
+  add_subdirectory (tests)
+endif()
+
+# nginx module
 add_custom_target(module_sources SOURCES
   ngx_module.c ngx_module_runtime.c ngx_module.h)
 
