@@ -36,14 +36,14 @@ static const char * sample_rules[] = {
   "DENY 2001:470:0:54::2/128",
   "DENY 2001:470:0:7b::/64",
   "ALLOW 2001:470:0:7c::/64",
-  "ALLOW 2001:bc8:2db9::caef:73f0:b000::/100",
+  "ALLOW 2001:bc8:2db9:caef:73f0:b000::/100",
   "DENY 2a01:7c00:0:1::/64",
   "ALLOW 2a01:cb04:34d:300:16cc:20ff:fef8:8000/115",
   "ALLOW 2a01:cb04:34d:300:16cc:20ff:fef8:a000/117",
   "ALLOW 2a01:cb0c:9c7:a700:a62b:8000::/83",
   "DENY 2a01:cb0d:125:2400:ea94:f6ff:fee3:5b80/122",
   "ALLOW 2a0d:7e80::/29",
-  "DENY 2a0d:82c1::5054::fe7a:605a/128",
+  "DENY 2a0d:82c1:5054::fe7a:605a/128",
   "ALLOW 2a13:ef45:375a::/47",
   "DENY 2c0f:feb0:21::/48",
   ""
@@ -165,7 +165,7 @@ TEST_CASE("check records")
   REQUIRE(find_record(db, &cidr) == db_allow);
   create_cidr_address(&cidr, "2A01:CB04:34D:300:16CC:20FF:FEF8:805E/128");
   REQUIRE(find_record(db, &cidr) == db_allow);
-  create_cidr_address(&cidr, "2A0D:82C1::5054::FE7A:605A/128");
+  create_cidr_address(&cidr, "2A0D:82C1:5054::FE7A:605A/128");
   REQUIRE(find_record(db, &cidr) == db_deny);
   create_cidr_address(&cidr, "2C0F:FEB0:21::683A:6/129");
   REQUIRE(find_record(db, &cidr) == db_deny);
@@ -190,7 +190,7 @@ TEST_CASE("export")
     snprintf(line, 11, "%08x: ", h);
   }
   fclose(file);
-  REQUIRE(h == 0xd941fc64);
+  REQUIRE(h == 0xf8771d01);
   remove("tmp.txt");
 }
 
