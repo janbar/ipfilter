@@ -21,7 +21,7 @@ if(${CMAKE_SYSTEM_NAME} STREQUAL "SunOS")
 endif()
 
 # tests
-option(BUILD_TESTING "Make tests" ON)
+option(BUILD_TESTING "Make tests" OFF)
 include(CTest)
 if(BUILD_TESTING)
   add_subdirectory (tests)
