@@ -1074,41 +1074,45 @@ static int _visit_node4(DB * db, FILE * out, cidr_address cidr, uint32_t node_id
 
 static int _print_rule_ip6(FILE * out, cidr_address * cidr, uint32_t data)
 {
-  int i, compressing = 0, compressed = 0;
+  int i = 0, cp = -1, cl = 0;
   uint16_t s = 0;
 
   fputs(((data & LEAF) == LEAF_DENY ? "DENY " : "ALLOW "), out);
 
-  for (i = 0; i < ADDR_SZ; i += 2)
+  do
   {
-    s = cidr->addr[i] << 8;
-    s += cidr->addr[i+1];
-    if (s || compressed)
+    int j = i;
+    while (j < ADDR_SZ && cidr->addr[j] == 0 && cidr->addr[j+1] == 0)
+      j += 2;
+    if ((j - i) > cl)
     {
-      if (compressing > 1)
-      {
-        compressed = 1;
-        compressing = 0;
-        fputs("::", out);
-      }
-      else if (compressing)
-      {
-        compressing = 0;
-        if (i > 2)
-          fputc(':', out);
-        fputs("0:", out);
-      }
-      else if (i)
-        fputc(':', out);
+      cp = i;
+      cl = j - i;
+    }
+    i = j + 2;
+  } while (i < ADDR_SZ);
 
-      fprintf(out, "%x", s);
+  i = 0;
+  do
+  {
+    if (i == cp)
+    {
+      i += cl;
+      if (i < ADDR_SZ)
+        fputc(':', out);
+      else
+        fputs("::", out);
     }
     else
-      ++compressing;
-  }
-
-  if (compressing)
-    fputs("::", out);
+    {
+      s = cidr->addr[i] << 8;
+      s += cidr->addr[i+1];
+      if (i)
+        fputc(':', out);
+      fprintf(out, "%x", s);
+      i += 2;
+    }
+  } while (i < ADDR_SZ);
 
   return fprintf(out, "/%d\n", cidr->prefix);
 }
