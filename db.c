@@ -960,6 +960,7 @@ int create_cidr_address_2(cidr_address * cidr,
     /* back to front */
     if (i < ADDR_SZ)
     {
+      const char * ps = p;
       p = addr_str + len - 1;
       while (*p != ':') --p;
       i = ADDR_SZ - 2;
@@ -973,6 +974,9 @@ int create_cidr_address_2(cidr_address * cidr,
         if (*(p + 1) == ':' || p == addr_str)
           break;
       }
+      /* validate */
+      if (p > ps)
+        return -(EINVAL);
     }
   }
 
