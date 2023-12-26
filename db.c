@@ -684,7 +684,7 @@ void db_updated(DB * db)
 db_response find_record(DB * db, cidr_address * cidr)
 {
   node * n;
-  int b, v = 0;
+  int b;
 
   if (ADDR_IS_V4MAPPED(cidr->addr))
   {
@@ -699,6 +699,7 @@ db_response find_record(DB * db, cidr_address * cidr)
 
   for (; b < cidr->prefix; ++b)
   {
+    int v;
     int c = b >> 3;
     int p = 7 - b + (c << 3);
 
@@ -1007,9 +1008,9 @@ void init_address_ipv4_mapped(cidr_address * cidr)
 
 static void _set_bit(unsigned char * addr, int bit_no, int v)
 {
-  int p, b;
   if (bit_no > 0)
   {
+    int p, b;
     p = (bit_no - 1) / 8;
     b = bit_no - 8 * p;
     if (v)
@@ -1075,14 +1076,13 @@ static int _visit_node4(DB * db, FILE * out, cidr_address cidr, uint32_t node_id
 static int _print_rule_ip6(FILE * out, cidr_address * cidr, uint32_t data)
 {
   int i = 0, cp = -1, cl = 0;
-  uint16_t s = 0;
 
   fputs(((data & LEAF) == LEAF_DENY ? "DENY " : "ALLOW "), out);
 
   do
   {
     int j = i;
-    while (j < ADDR_SZ && cidr->addr[j] == 0 && cidr->addr[j+1] == 0)
+    while (j < (ADDR_SZ - 1) && cidr->addr[j] == 0 && cidr->addr[j+1] == 0)
       j += 2;
     if ((j - i) > cl)
     {
@@ -1105,6 +1105,7 @@ static int _print_rule_ip6(FILE * out, cidr_address * cidr, uint32_t data)
     }
     else
     {
+      uint16_t s;
       s = cidr->addr[i] << 8;
       s += cidr->addr[i+1];
       if (i)
