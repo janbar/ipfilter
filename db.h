@@ -157,7 +157,8 @@ int export_db(DB * db, FILE * out);
 
 /**
  * Helper to fill the struct cidr_address from CIDR string
- * The supported format is nnn.nnn.nnn.nnn/pp
+ * The supported formats are:
+ *   nnn.nnn.nnn.nnn/pp , ::FFFF:nnn.nnn.nnn.nnn/ppp , x:x:x:x:x:x:x:x/ppp
  * @param cidr The struct to load
  * @param cidr_str The formatted string
  * @return 0 on success, else error
@@ -166,10 +167,11 @@ int create_cidr_address(cidr_address * cidr, const char * cidr_str);
 
 /**
  * Helper to fill the struct cidr_address from address string and prefix
- * The supported format is nnn.nnn.nnn.nnn for the address
+ * The supported formats are:
+ *   nnn.nnn.nnn.nnn , ::FFFF:nnn.nnn.nnn.nnn , x:x:x:x:x:x:x:x
  * @param cidr The struct to load
  * @param addr_str The formatted string
- * @param prefix subnet number (0-32)
+ * @param prefix subnet number (0-32/0-128)
  * @return 0 on success, else error
  */
 int create_cidr_address_2(cidr_address * cidr,
