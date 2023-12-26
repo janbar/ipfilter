@@ -893,6 +893,26 @@ static int ipf_dec_to_num(const char *str)
   return val;
 }
 
+static int ipf_u8_to_dec(char * str, unsigned char u)
+{
+  int d, s = 0, len = 0;
+  static const char g[10] = {
+    '0', '1', '2', '3', '4', '5', '6', '7', '8', '9',
+  };
+
+  for (d = 100; d > 1; d /= 10)
+  {
+    int c = (u - s) / d;
+    s += c * d;
+    if (s)
+    {
+      str[len++] = g[c];
+    }
+  }
+  str[len++] = g[(u - s)];
+  return len;
+}
+
 static int ipf_hex_to_num(const char *str)
 {
   int val = 0;
@@ -909,6 +929,27 @@ static int ipf_hex_to_num(const char *str)
     ++str;
   }
   return val;
+}
+
+static int ipf_u16_to_hex(char * str, uint16_t u)
+{
+  int d, s = 0, len = 0;
+  static const char g[16] = {
+    '0', '1', '2', '3', '4', '5', '6', '7',
+    '8', '9', 'a', 'b', 'c', 'd', 'e', 'f',
+  };
+
+  for (d = 12; d > 0; d -= 4)
+  {
+    int c = 0xf & (u >> d);
+    s += c;
+    if (s)
+    {
+      str[len++] = g[c];
+    }
+  }
+  str[len++] = g[(0xf & u)];
+  return len;
 }
 
 int ipf_create_cidr_address_2(ipf_cidr_address * cidr,
@@ -1031,15 +1072,22 @@ static void ipf_set_bit(unsigned char * addr, int bit_no, int v)
   }
 }
 
-static int ipf_print_rule_ip4(FILE * out,
-                              ipf_cidr_address * cidr,
-                              uint32_t data)
+static int ipf_print_ip4(char * buf, ipf_cidr_address * cidr)
 {
-  fputs(((data & LEAF) == LEAF_ALLOW ? "ALLOW " : "DENY "), out);
-  return fprintf(out, "%hhu.%hhu.%hhu.%hhu/%d\n",
-                 cidr->addr[IPF_ADDR_SZ - 4], cidr->addr[IPF_ADDR_SZ - 3],
-                 cidr->addr[IPF_ADDR_SZ - 2], cidr->addr[IPF_ADDR_SZ - 1],
-                 cidr->prefix - V4MAPPED_1BIT);
+  int len = 0;
+
+  len += ipf_u8_to_dec(buf, cidr->addr[IPF_ADDR_SZ - 4]);
+  buf[len++] = '.';
+  len += ipf_u8_to_dec(buf + len, cidr->addr[IPF_ADDR_SZ - 3]);
+  buf[len++] = '.';
+  len += ipf_u8_to_dec(buf + len, cidr->addr[IPF_ADDR_SZ - 2]);
+  buf[len++] = '.';
+  len += ipf_u8_to_dec(buf + len, cidr->addr[IPF_ADDR_SZ - 1]);
+
+  buf[len++] = '/';
+  len += ipf_u8_to_dec(buf + len, cidr->prefix - V4MAPPED_1BIT);
+  buf[len] = '\0';
+  return len;
 }
 
 static int ipf_visit_node4(IPF_DB * db, FILE * out,
@@ -1058,8 +1106,12 @@ static int ipf_visit_node4(IPF_DB * db, FILE * out,
   /* visit left (0) */
   if ((_node->raw0 & LEAF))
   {
+    char buf[24];
     ipf_set_bit(cidr.addr, cidr.prefix, 0);
-    if (ipf_print_rule_ip4(out, &cidr, _node->raw0) < 0)
+    ipf_print_ip4(buf, &cidr);
+    fputs(((_node->raw0 & LEAF) == LEAF_ALLOW ? "ALLOW " : "DENY "), out);
+    fputs(buf, out);
+    if (fputc('\n', out) < 1)
       return (-1);
   }
   else if ((_node->raw0 & ADDR))
@@ -1072,8 +1124,12 @@ static int ipf_visit_node4(IPF_DB * db, FILE * out,
   /* visit right (1) */
   if ((_node->raw1 & LEAF))
   {
+    char buf[24];
     ipf_set_bit(cidr.addr, cidr.prefix, 1);
-    if (ipf_print_rule_ip4(out, &cidr, _node->raw1) < 0)
+    ipf_print_ip4(buf, &cidr);
+    fputs(((_node->raw1 & LEAF) == LEAF_ALLOW ? "ALLOW " : "DENY "), out);
+    fputs(buf, out);
+    if (fputc('\n', out) < 1)
       return (-1);
   }
   else if ((_node->raw1 & ADDR))
@@ -1086,13 +1142,9 @@ static int ipf_visit_node4(IPF_DB * db, FILE * out,
   return 0;
 }
 
-static int ipf_print_rule_ip6(FILE * out,
-                              ipf_cidr_address * cidr,
-                              uint32_t data)
+static int ipf_print_ip6(char * buf, ipf_cidr_address * cidr)
 {
-  int i = 0, cp = -1, cl = 0;
-
-  fputs(((data & LEAF) == LEAF_DENY ? "DENY " : "ALLOW "), out);
+  int i = 0, cp = -1, cl = 0, len = 0;
 
   do
   {
@@ -1113,10 +1165,9 @@ static int ipf_print_rule_ip6(FILE * out,
     if (i == cp)
     {
       i += cl;
-      if (i < IPF_ADDR_SZ)
-        fputc(':', out);
-      else
-        fputs("::", out);
+      buf[len++] = ':';
+      if (i >= IPF_ADDR_SZ)
+        buf[len++] = ':';
     }
     else
     {
@@ -1124,13 +1175,16 @@ static int ipf_print_rule_ip6(FILE * out,
       s = cidr->addr[i] << 8;
       s += cidr->addr[i+1];
       if (i)
-        fputc(':', out);
-      fprintf(out, "%x", s);
+        buf[len++] = ':';
+      len += ipf_u16_to_hex(buf + len, s);
       i += 2;
     }
   } while (i < IPF_ADDR_SZ);
 
-  return fprintf(out, "/%d\n", cidr->prefix);
+  buf[len++] = '/';
+  len += ipf_u8_to_dec(buf + len, cidr->prefix);
+  buf[len] = '\0';
+  return len;
 }
 
 static int ipf_visit_node6(IPF_DB * db, FILE * out,
@@ -1149,8 +1203,12 @@ static int ipf_visit_node6(IPF_DB * db, FILE * out,
   /* visit left (0) */
   if ((_node->raw0 & LEAF))
   {
+    char buf[48];
     ipf_set_bit(cidr.addr, cidr.prefix, 0);
-    if (ipf_print_rule_ip6(out, &cidr, _node->raw0) < 0)
+    ipf_print_ip6(buf, &cidr);
+    fputs(((_node->raw0 & LEAF) == LEAF_DENY ? "DENY " : "ALLOW "), out);
+    fputs(buf, out);
+    if (fputc('\n', out) < 1)
       return (-1);
   }
   else if ((_node->raw0 & ADDR))
@@ -1163,8 +1221,12 @@ static int ipf_visit_node6(IPF_DB * db, FILE * out,
   /* visit right (1) */
   if ((_node->raw1 & LEAF))
   {
+    char buf[48];
     ipf_set_bit(cidr.addr, cidr.prefix, 1);
-    if (ipf_print_rule_ip6(out, &cidr, _node->raw1) < 0)
+    ipf_print_ip6(buf, &cidr);
+    fputs(((_node->raw1 & LEAF) == LEAF_DENY ? "DENY " : "ALLOW "), out);
+    fputs(buf, out);
+    if (fputc('\n', out) < 1)
       return (-1);
   }
   else if ((_node->raw1 & ADDR))
