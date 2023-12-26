@@ -1,0 +1,35 @@
+
+Build database tools only
+=========================
+
+1. Configure the build
+
+  mkdir build
+  cmake -B build -DCMAKE_BUILD_TYPE=Release \
+    -DBUILD_TESTING=ON
+
+2. Build targets "ipfiltercli" and run tests
+
+cmake --build build --target all
+cmake --build build --target test
+
+
+Build database tools and the module for NGINX
+=============================================
+
+1. Download the source code of NGINX server (choose the suitable version)
+
+  wget https://nginx.org/download/nginx-1.18.0.tar.gz
+  tar xvfz nginx-1.18.0.tar.gz
+
+Note: Modules build requires libraries PCRE, zlib, OpenSSL
+
+2. Configure the build
+
+  mkdir build
+  cmake -B build -DCMAKE_BUILD_TYPE=Release \
+    -DNGINX_SOURCE_DIR=$PWD/nginx-1.18.0
+
+3. Build targets "ipfiltercli" and "ngx_http_ipfilter_module.so"
+
+  cmake --build build --target all
