@@ -69,8 +69,8 @@
 #include <arpa/inet.h>
 
 #define DBTAG_LEN 4
-static const char * g_dbtag = "IPF4";
-static const int g_indianness = 0xFF000000;
+static const char * ipf_dbtag = "IPF4";
+static const int ipf_bom = 0xFF000000;
 
 #define SEGS        0x100      /* base of segment size */
 #define ADDR        0x3FFFFFFF /* 30 bits size */
@@ -83,20 +83,20 @@ static const int g_indianness = 0xFF000000;
 #define LEAF_ALLOW  0x40000000
 #define LEAF_DENY   0x80000000
 
-#define LEAF_VALUE(u)   ((db_response)(((u) >> 30) & 0x3))
+#define LEAF_VALUE(u)   ((ipf_response)(((u) >> 30) & 0x3))
 
-#define V4MAPPED_1BIT   (8 * (ADDR_SZ - 4))
+#define V4MAPPED_1BIT   (8 * (IPF_ADDR_SZ - 4))
 
 #define ADDR_IS_V4MAPPED(a) (\
   (*(const uint32_t *)(const void *)(&(a[0])) == 0) && \
   (*(const uint32_t *)(const void *)(&(a[4])) == 0) && \
   (*(const uint32_t *)(const void *)(&(a[8])) == ntohl(0x0000ffff)))
 
-static const unsigned char addr4_init[] = {
+static const unsigned char ipf_addr4_init[] = {
   0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
   0x00, 0x00, 0xff, 0xff, 0x00, 0x00, 0x00, 0x00 };
 
-static const unsigned char addr6_init[] = {
+static const unsigned char ipf_addr6_init[] = {
   0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
   0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00 };
 
@@ -131,11 +131,11 @@ typedef struct
   int       flag_rw;
 } mmap_ctx;
 
-struct DB
+struct IPF_DB
 {
   db_header * header;
   node *      data;
-  void (*destructor)(DB*);
+  void (*destructor)(IPF_DB*);
   mmap_ctx    mmap_ctx;
 
   struct
@@ -149,16 +149,16 @@ typedef struct mounted mounted;
 
 struct mounted
 {
-  DB *       db;
+  IPF_DB *       db;
   uint32_t   hash;
   volatile uint32_t refcount;
   mounted *  _prev;
   mounted *  _next;
 };
 
-static mounted * g_mounted = NULL;
+static mounted * ipf_mounted = NULL;
 
-static uint32_t _hash(uint32_t maxsize, const char * buf, unsigned len)
+static uint32_t ipf_hash(uint32_t maxsize, const char * buf, unsigned len)
 {
   /*
    * DJB Hash Function
@@ -173,10 +173,10 @@ static uint32_t _hash(uint32_t maxsize, const char * buf, unsigned len)
   return h % maxsize;
 }
 
-static DB * _hold_mounted(const char * filepath)
+static IPF_DB * ipf_hold_mounted(const char * filepath)
 {
-  uint32_t h = _hash(0xffffffff, filepath, strlen(filepath));
-  mounted * m = g_mounted;
+  uint32_t h = ipf_hash(0xffffffff, filepath, strlen(filepath));
+  mounted * m = ipf_mounted;
   while (m)
   {
     if (m->hash == h)
@@ -189,25 +189,25 @@ static DB * _hold_mounted(const char * filepath)
   return NULL;
 }
 
-static void _register_mounted(const char * filepath, DB * db)
+static void ipf_register_mounted(const char * filepath, IPF_DB * db)
 {
   mounted * m = (mounted*) malloc(sizeof(mounted));
   m->db = db;
-  m->hash = _hash(0xffffffff, filepath, strlen(filepath));
+  m->hash = ipf_hash(0xffffffff, filepath, strlen(filepath));
   m->refcount = 1;
   m->_prev = NULL;
   m->_next = NULL;
-  if (g_mounted)
+  if (ipf_mounted)
   {
-    m->_next = g_mounted;
-    g_mounted->_prev = m;
+    m->_next = ipf_mounted;
+    ipf_mounted->_prev = m;
   }
-  g_mounted = m;
+  ipf_mounted = m;
 }
 
-static int _release_mounted(DB * db)
+static int ipf_release_mounted(IPF_DB * db)
 {
-  mounted * m = g_mounted;
+  mounted * m = ipf_mounted;
   while (m)
   {
     if (m->db == db)
@@ -216,7 +216,7 @@ static int _release_mounted(DB * db)
         return --(m->refcount);
       /* free */
       if (!m->_prev && !m->_next)
-        g_mounted = NULL;
+        ipf_mounted = NULL;
       else
       {
         if (m->_prev)
@@ -233,7 +233,7 @@ static int _release_mounted(DB * db)
   return 0;
 }
 
-static size_t _mmap_roundup_size(size_t size)
+static size_t ipf_mmap_roundup_size(size_t size)
 {
   size_t _size;
   size_t page_size = (size_t) sysconf(_SC_PAGESIZE);
@@ -243,10 +243,10 @@ static size_t _mmap_roundup_size(size_t size)
   return _size;
 }
 
-static void * _mmap_reserve(size_t * size)
+static void * ipf_mmap_reserve(size_t * size)
 {
   void * addr;
-  size_t _size = _mmap_roundup_size(*size);
+  size_t _size = ipf_mmap_roundup_size(*size);
 
   addr = mmap(NULL, _size, PROT_NONE, MAP_ANON|MAP_PRIVATE, -1, 0);
   if (addr == MAP_FAILED)
@@ -255,7 +255,7 @@ static void * _mmap_reserve(size_t * size)
   return addr;
 }
 
-static int _mmap_database(mmap_ctx * ctx)
+static int ipf_mmap_database(mmap_ctx * ctx)
 {
   void * addr;
   struct stat sb;
@@ -273,7 +273,7 @@ static int _mmap_database(mmap_ctx * ctx)
   if (sb.st_size > (off_t) ctx->reserved_bytes)
     return -(ERANGE);
 
-  size = _mmap_roundup_size((size_t) sb.st_size);
+  size = ipf_mmap_roundup_size((size_t) sb.st_size);
   prot = PROT_READ;
   if (ctx->flag_rw)
     prot |= PROT_WRITE;
@@ -286,9 +286,9 @@ static int _mmap_database(mmap_ctx * ctx)
   return 0;
 }
 
-static void _free_mounted_db(DB * db)
+static void ipf_free_mounted_db(IPF_DB * db)
 {
-  if (_release_mounted(db) == 0)
+  if (ipf_release_mounted(db) == 0)
   {
     /* free allocated space */
     munmap(db->mmap_ctx.addr, db->mmap_ctx.allocated_bytes);
@@ -303,7 +303,7 @@ static void _free_mounted_db(DB * db)
   }
 }
 
-static int add_segment(DB * db)
+static int ipf_add_segment(IPF_DB * db)
 {
   int grow = 1;
   node * seg;
@@ -327,7 +327,7 @@ static int add_segment(DB * db)
     return -(EIO);
 
   /* map over and update the cache */
-  if (_mmap_database(&(db->mmap_ctx)) < 0)
+  if (ipf_mmap_database(&(db->mmap_ctx)) < 0)
     return -(ENOMEM);
   db->cache.seg_nb += grow;
 
@@ -363,7 +363,7 @@ static int add_segment(DB * db)
  * WARNING: no check of the vector address is done, therefore the given value
  * must be checked before calling this: i.e (node_id & ADDR) != 0.
  */
-static node * get_node(DB * db, uint32_t node_id)
+static node * ipf_get_node(IPF_DB * db, uint32_t node_id)
 {
   uint16_t seg_no = (node_id >> 16) & SEG_RANGE;
   uint16_t pos_no = node_id & NOD_RANGE;
@@ -371,7 +371,7 @@ static node * get_node(DB * db, uint32_t node_id)
   {
     /* it is a corruption else the database has been extended */
     if (seg_no > db->header->seg_nb ||
-            _mmap_database(&(db->mmap_ctx)) < 0)
+            ipf_mmap_database(&(db->mmap_ctx)) < 0)
       return NULL;
     /* refresh cache */
     db->cache.seg_nb = db->header->seg_nb;
@@ -380,7 +380,7 @@ static node * get_node(DB * db, uint32_t node_id)
   return &(db->data[(seg_no - 1) * db->cache.seg_sz + pos_no]);
 }
 
-static node * new_node(DB * db, uint32_t * node_id)
+static node * ipf_new_node(IPF_DB * db, uint32_t * node_id)
 {
   db_header * header = db->header;
 
@@ -388,7 +388,7 @@ static node * new_node(DB * db, uint32_t * node_id)
   if (header->free_addr)
   {
     uint32_t freeaddr = header->free_addr;
-    node * freenode = get_node(db, freeaddr);
+    node * freenode = ipf_get_node(db, freeaddr);
 
     if (freenode->raw0 & ADDR)
     {
@@ -398,9 +398,9 @@ static node * new_node(DB * db, uint32_t * node_id)
        * by doing that, the cost is the lowest */
       if ((freenode->raw1 & ADDR))
       {
-        node * _node = get_node(db, freenode->raw0);
+        node * _node = ipf_get_node(db, freenode->raw0);
         while (_node && (_node->raw1 & ADDR))
-          _node = get_node(db, _node->raw1);
+          _node = ipf_get_node(db, _node->raw1);
         if (!_node)
           return NULL; /* corruption */
         _node->raw1 = freenode->raw1;
@@ -419,36 +419,36 @@ static node * new_node(DB * db, uint32_t * node_id)
     *node_id = freeaddr;
     return freenode;
   }
-  if (add_segment(db) > 0)
-    return new_node(db, node_id);
+  if (ipf_add_segment(db) > 0)
+    return ipf_new_node(db, node_id);
   return NULL;
 }
 
-const char * db_format()
+const char * ipf_db_format()
 {
-  return g_dbtag;
+  return ipf_dbtag;
 }
 
-const char * db_name(DB * db)
+const char * ipf_db_name(IPF_DB * db)
 {
   return db->header->db_name;
 }
 
-void rename_db(DB *db, const char * name)
+void ipf_rename_db(IPF_DB *db, const char * name)
 {
   strncpy(db->header->db_name, name, 30);
 }
 
-static size_t _max_db_file_size(uint16_t seg_mask)
+static size_t ipf_max_db_file_size(uint16_t seg_mask)
 {
   return ((ADDR >> 16) * SEGMENT_SIZE(seg_mask) * sizeof(node)) + sizeof (db_header);
 }
 
-DB * create_db(const char * filepath, const char * db_name, unsigned seg_size)
+IPF_DB * ipf_create_db(const char * filepath, const char * db_name, unsigned seg_size)
 {
   struct stat filestat;
   db_header * tmp;
-  DB * db;
+  IPF_DB * db;
   uint16_t seg_mask;
   FILE * file;
 
@@ -471,9 +471,9 @@ DB * create_db(const char * filepath, const char * db_name, unsigned seg_size)
   if (!tmp)
     return NULL;
   memset(tmp, '\0', sizeof(db_header));
-  memcpy(tmp->tag, g_dbtag, DBTAG_LEN);
-  tmp->indianness = g_indianness;
-  tmp->max_file_size = _max_db_file_size(seg_mask);
+  memcpy(tmp->tag, ipf_dbtag, DBTAG_LEN);
+  tmp->indianness = ipf_bom;
+  tmp->max_file_size = ipf_max_db_file_size(seg_mask);
   strncpy(tmp->db_name, db_name, 30);
   tmp->created = time(NULL);
   tmp->updated = tmp->created;
@@ -493,18 +493,18 @@ DB * create_db(const char * filepath, const char * db_name, unsigned seg_size)
   fclose(file);
   free(tmp);
 
-  db = mount_db(filepath, 1);
+  db = ipf_mount_db(filepath, 1);
   if (!db)
     return NULL;
 
-  if (add_segment(db) != 1)
+  if (ipf_add_segment(db) != 1)
   {
-    close_db(&db);
+    ipf_close_db(&db);
     return NULL;
   }
   /* set the root node */
-  new_node(db, &(db->header->root4_addr));
-  new_node(db, &(db->header->root6_addr));
+  ipf_new_node(db, &(db->header->root4_addr));
+  ipf_new_node(db, &(db->header->root6_addr));
   return db;
 fail1:
   fclose(file);
@@ -513,35 +513,37 @@ fail0:
   return NULL;
 }
 
-void stat_db(DB * db)
+void ipf_stat_db(IPF_DB * db, FILE * out)
 {
   db_header * header = db->header;
-  printf("db_name    : %s\n", header->db_name);
-  printf("created    : %" PRId64 "\n", (int64_t)header->created);
-  printf("updated    : %" PRId64 "\n", (int64_t)header->updated);
-  printf("db_cur_size: %" PRIu64 "\n", (uint64_t)db->mmap_ctx.allocated_bytes);
-  printf("db_max_size: %" PRIu64 "\n", (uint64_t)db->mmap_ctx.reserved_bytes);
-  printf("seg_size   : %u\n", SEGMENT_SIZE(header->seg_mask));
-  printf("seg_count  : %u\n", (unsigned)header->seg_nb);
-  printf("freelist   : %08x\n", header->free_addr);
-  printf("rootnode4  : %08x\n", header->root4_addr);
-  printf("rootnode6  : %08x\n", header->root6_addr);
+  fprintf(out,"db_name    : %s\n", header->db_name);
+  fprintf(out, "created    : %" PRId64 "\n", (int64_t)header->created);
+  fprintf(out, "updated    : %" PRId64 "\n", (int64_t)header->updated);
+  fprintf(out, "db_cur_size: %" PRIu64 "\n",
+          (uint64_t)db->mmap_ctx.allocated_bytes);
+  fprintf(out, "db_max_size: %" PRIu64 "\n",
+          (uint64_t)db->mmap_ctx.reserved_bytes);
+  fprintf(out, "seg_size   : %u\n", SEGMENT_SIZE(header->seg_mask));
+  fprintf(out, "seg_count  : %u\n", (unsigned)header->seg_nb);
+  fprintf(out, "freelist   : %08x\n", header->free_addr);
+  fprintf(out, "rootnode4  : %08x\n", header->root4_addr);
+  fprintf(out, "rootnode6  : %08x\n", header->root6_addr);
 }
 
-void close_db(DB ** db)
+void ipf_close_db(IPF_DB ** db)
 {
   (*db)->destructor(*db);
   *db = NULL;
 }
 
-static int _give_back_tree(DB * db, uint32_t node_id)
+static int ipf_give_back_tree(IPF_DB * db, uint32_t node_id)
 {
   if ((node_id & ADDR))
   {
-    node * _node = get_node(db, node_id);
+    node * _node = ipf_get_node(db, node_id);
     /* go to leaf */
     while (_node && (_node->raw0 & ADDR))
-      _node = get_node(db, _node->raw0);
+      _node = ipf_get_node(db, _node->raw0);
     if (!_node)
       return (-1); /* corruption */
     /* WARNING: leaf bit must be set to break any query in progress */
@@ -554,7 +556,9 @@ static int _give_back_tree(DB * db, uint32_t node_id)
   return 0;
 }
 
-static db_response _create_record(DB * db, cidr_address * cidr, uint32_t leaf_mask)
+static ipf_response ipf_create_leaf(IPF_DB * db,
+                                    ipf_cidr_address * cidr,
+                                    uint32_t leaf_mask)
 {
   node * n;
   int b, v = 0, ln = cidr->prefix - 1;
@@ -563,12 +567,12 @@ static db_response _create_record(DB * db, cidr_address * cidr, uint32_t leaf_ma
   if (ADDR_IS_V4MAPPED(cidr->addr))
   {
     b = V4MAPPED_1BIT;
-    n = get_node(db, db->header->root4_addr);
+    n = ipf_get_node(db, db->header->root4_addr);
   }
   else
   {
     b = 0;
-    n = get_node(db, db->header->root6_addr);
+    n = ipf_get_node(db, db->header->root6_addr);
   }
 
   for (; b < cidr->prefix; ++b)
@@ -580,7 +584,7 @@ static db_response _create_record(DB * db, cidr_address * cidr, uint32_t leaf_ma
 
     /* corruption or failure */
     if (!n)
-      return db_error;
+      return ipf_error;
 
     /* left branch */
     if (v == 0)
@@ -589,7 +593,7 @@ static db_response _create_record(DB * db, cidr_address * cidr, uint32_t leaf_ma
         break; /* make the leaf here */
       /* next node */
       if ((n->raw0 & ADDR))
-        n = get_node(db, n->raw0);
+        n = ipf_get_node(db, n->raw0);
       else if ((n->raw0 & leaf_mask))
         return LEAF_VALUE(leaf_mask); /* already exists */
       else
@@ -598,9 +602,9 @@ static db_response _create_record(DB * db, cidr_address * cidr, uint32_t leaf_ma
         if (!inherit)
           inherit = n->raw0 & LEAF;
         /* make node */
-        n = new_node(db, &(n->raw0));
+        n = ipf_new_node(db, &(n->raw0));
         if (!n)
-          return db_error;
+          return ipf_error;
         /* make new leaf inherit */
         n->raw0 = inherit;
         n->raw1 = inherit;
@@ -613,7 +617,7 @@ static db_response _create_record(DB * db, cidr_address * cidr, uint32_t leaf_ma
         break; /* make the leaf here */
       /* next node */
       if ((n->raw1 & ADDR))
-        n = get_node(db, n->raw1);
+        n = ipf_get_node(db, n->raw1);
       else if ((n->raw1 & leaf_mask))
         return LEAF_VALUE(leaf_mask); /* already exists */
       else
@@ -622,9 +626,9 @@ static db_response _create_record(DB * db, cidr_address * cidr, uint32_t leaf_ma
         if (!inherit)
           inherit = n->raw1 & LEAF;
         /* make node */
-        n = new_node(db, &(n->raw1));
+        n = ipf_new_node(db, &(n->raw1));
         if (!n)
-          return db_error;
+          return ipf_error;
         /* make new leaf inherit */
         n->raw0 = inherit;
         n->raw1 = inherit;
@@ -634,54 +638,57 @@ static db_response _create_record(DB * db, cidr_address * cidr, uint32_t leaf_ma
 
   /* corruption or failure */
   if (!n)
-    return db_error;
+    return ipf_error;
 
   /* make the leaf */
   if (ln < b)
   {
-    if (_give_back_tree(db, n->raw0) < 0 || _give_back_tree(db, n->raw1) < 0)
-      return db_error;
+    if (ipf_give_back_tree(db, n->raw0) < 0 ||
+            ipf_give_back_tree(db, n->raw1) < 0)
+      return ipf_error;
     n->raw0 = leaf_mask;
     n->raw1 = leaf_mask;
   }
   else if (v == 0)
   {
-    if (_give_back_tree(db, n->raw0) < 0)
-      return db_error;
+    if (ipf_give_back_tree(db, n->raw0) < 0)
+      return ipf_error;
     if ((n->raw0 & leaf_mask))
       return LEAF_VALUE(leaf_mask); /* already exists */
     n->raw0 = leaf_mask;
   }
   else
   {
-    if (_give_back_tree(db, n->raw1) < 0)
-      return db_error;
+    if (ipf_give_back_tree(db, n->raw1) < 0)
+      return ipf_error;
     if ((n->raw1 & leaf_mask))
       return LEAF_VALUE(leaf_mask); /* already exists */
     n->raw1 = leaf_mask;
   }
   //printf("n %p = %d , %d\n", n, LEAF_VALUE(n->raw0), LEAF_VALUE(n->raw1));
-  return db_not_found;
+  return ipf_not_found;
 }
 
-db_response insert_cidr(DB * db, cidr_address * cidr, db_rule rule)
+ipf_response ipf_insert_rule(IPF_DB * db,
+                             ipf_cidr_address * cidr,
+                             ipf_rule rule)
 {
   switch (rule)
   {
-  case rule_allow:
-    return _create_record(db, cidr, LEAF_ALLOW);
-  case rule_deny:
-    return _create_record(db, cidr, LEAF_DENY);
+  case ipf_rule_allow:
+    return ipf_create_leaf(db, cidr, LEAF_ALLOW);
+  case ipf_rule_deny:
+    return ipf_create_leaf(db, cidr, LEAF_DENY);
   }
-  return db_error;
+  return ipf_error;
 }
 
-void db_updated(DB * db)
+void ipf_db_updated(IPF_DB * db)
 {
   db->header->updated = time(NULL);
 }
 
-db_response find_record(DB * db, cidr_address * cidr)
+ipf_response ipf_query(IPF_DB * db, ipf_cidr_address * cidr)
 {
   node * n;
   int b;
@@ -689,12 +696,12 @@ db_response find_record(DB * db, cidr_address * cidr)
   if (ADDR_IS_V4MAPPED(cidr->addr))
   {
     b = V4MAPPED_1BIT;
-    n = get_node(db, db->header->root4_addr);
+    n = ipf_get_node(db, db->header->root4_addr);
   }
   else
   {
     b = 0;
-    n = get_node(db, db->header->root6_addr);
+    n = ipf_get_node(db, db->header->root6_addr);
   }
 
   for (; b < cidr->prefix; ++b)
@@ -705,7 +712,7 @@ db_response find_record(DB * db, cidr_address * cidr)
 
     /* corruption or failure */
     if (!n)
-      return db_error;
+      return ipf_error;
 
     v = (cidr->addr[c] >> p) & 0x1;
 
@@ -718,9 +725,9 @@ db_response find_record(DB * db, cidr_address * cidr)
       if ((n->raw0 & LEAF))
         return LEAF_VALUE(n->raw0);
       else if ((n->raw0 & ADDR))
-        n = get_node(db, n->raw0);
+        n = ipf_get_node(db, n->raw0);
       else
-        return db_not_found;
+        return ipf_not_found;
     }
     else
     {
@@ -728,15 +735,15 @@ db_response find_record(DB * db, cidr_address * cidr)
       if ((n->raw1 & LEAF))
         return LEAF_VALUE(n->raw1);
       else if ((n->raw1 & ADDR))
-        n = get_node(db, n->raw1);
+        n = ipf_get_node(db, n->raw1);
       else
-        return db_not_found;
+        return ipf_not_found;
     }
   }
-  return db_not_found;
+  return ipf_not_found;
 }
 
-void purge_db(DB * db)
+void ipf_purge_db(IPF_DB * db)
 {
   unsigned s;
   node * seg;
@@ -747,11 +754,11 @@ void purge_db(DB * db)
     return;
 
   /* reset the ip4 root node now */
-  seg = get_node(db, header->root4_addr);
+  seg = ipf_get_node(db, header->root4_addr);
   seg->raw0 = 0;
   seg->raw1 = 0;
   /* reset the ip6 root node now */
-  seg = get_node(db, header->root6_addr);
+  seg = ipf_get_node(db, header->root6_addr);
   seg->raw0 = 0;
   seg->raw1 = 0;
   /* reset freelist */
@@ -778,11 +785,11 @@ void purge_db(DB * db)
     /* move to next segment */
     seg -= db->cache.seg_sz;
   }
-  new_node(db, &(header->root4_addr));
-  new_node(db, &(header->root6_addr));
+  ipf_new_node(db, &(header->root4_addr));
+  ipf_new_node(db, &(header->root6_addr));
 }
 
-static int _read_db_header(db_header * header, FILE * file)
+static int ipf_read_db_header(db_header * header, FILE * file)
 {
   char * addr;
   rewind(file);
@@ -790,25 +797,25 @@ static int _read_db_header(db_header * header, FILE * file)
     return -(EIO);
   addr = (char*) header;
   /* check tag */
-  if (memcmp(addr, g_dbtag, DBTAG_LEN) != 0)
+  if (memcmp(addr, ipf_dbtag, DBTAG_LEN) != 0)
     return -(EINVAL);
   addr += DBTAG_LEN;
   /* check endianness */
-  if (memcmp(addr, &g_indianness, sizeof (uint32_t)) != 0)
+  if (memcmp(addr, &ipf_bom, sizeof (uint32_t)) != 0)
     return -(EINVAL);
   return 0;
 }
 
-DB * mount_db(const char * filepath, int rw)
+IPF_DB * ipf_mount_db(const char * filepath, int rw)
 {
   mmap_ctx mmap_ctx;
   char * addr;
-  DB * db;
+  IPF_DB * db;
   db_header * file_header;
   FILE * file;
 
   /* return the already mounted db */
-  if ((db = _hold_mounted(filepath)))
+  if ((db = ipf_hold_mounted(filepath)))
     return db;
 
   /* mount the db */
@@ -822,19 +829,19 @@ DB * mount_db(const char * filepath, int rw)
   file_header = (db_header*) malloc(sizeof(db_header));
   if (!file_header)
     goto fail0;
-  if (_read_db_header(file_header, file) < 0)
+  if (ipf_read_db_header(file_header, file) < 0)
     goto fail1;
 
   /* reserve the whole size */
   mmap_ctx.reserved_bytes = file_header->max_file_size;
-  mmap_ctx.addr = _mmap_reserve(&mmap_ctx.reserved_bytes);
+  mmap_ctx.addr = ipf_mmap_reserve(&mmap_ctx.reserved_bytes);
   if (!mmap_ctx.addr)
     goto fail1;
 
   /* load the database */
   mmap_ctx.flag_rw = rw;
   mmap_ctx.file = file;
-  if (_mmap_database(&mmap_ctx) < 0)
+  if (ipf_mmap_database(&mmap_ctx) < 0)
     goto fail2;
 
   /* allocated size cannot be less than stated from file header */
@@ -844,7 +851,7 @@ DB * mount_db(const char * filepath, int rw)
 
   addr = (char*) mmap_ctx.addr;
 
-  db = (DB*) malloc(sizeof (DB));
+  db = (IPF_DB*) malloc(sizeof (IPF_DB));
   if (!db)
     goto fail2;
   /* keep in cache the older known state, therefore from file header */
@@ -854,12 +861,12 @@ DB * mount_db(const char * filepath, int rw)
 
   /* init the database */
   db->header = (db_header*) addr;
-  db->destructor = _free_mounted_db;
+  db->destructor = ipf_free_mounted_db;
   db->mmap_ctx = mmap_ctx;
   db->data = (node *) (addr + sizeof (db_header));
 
   /* register the mounted db */
-  _register_mounted(filepath, db);
+  ipf_register_mounted(filepath, db);
   return db;
 fail3:
   free(db);
@@ -872,7 +879,7 @@ fail0:
   return NULL;
 }
 
-static int _dec_to_num(const char *str)
+static int ipf_dec_to_num(const char *str)
 {
   int val = 0;
   while (*str)
@@ -886,7 +893,7 @@ static int _dec_to_num(const char *str)
   return val;
 }
 
-static int _hex_to_num(const char *str)
+static int ipf_hex_to_num(const char *str)
 {
   int val = 0;
   while (*str)
@@ -904,8 +911,9 @@ static int _hex_to_num(const char *str)
   return val;
 }
 
-int create_cidr_address_2(cidr_address * cidr,
-                          const char * addr_str, int prefix)
+int ipf_create_cidr_address_2(ipf_cidr_address * cidr,
+                              const char * addr_str,
+                              int prefix)
 {
   int i, len;
   const char * p;
@@ -923,51 +931,51 @@ int create_cidr_address_2(cidr_address * cidr,
     else
       prefix += V4MAPPED_1BIT;
 
-    memcpy(cidr->addr, addr4_init, ADDR_SZ);
+    memcpy(cidr->addr, ipf_addr4_init, IPF_ADDR_SZ);
     /* front to back */
     i = 12;
     for (;;)
     {
-      int val = _dec_to_num(p);
+      int val = ipf_dec_to_num(p);
       cidr->addr[i] = val & 0xff;
       ++i;
       while (*(++p) != '.' && *p != '\0');
-      if (*p == '\0' || i >= ADDR_SZ)
+      if (*p == '\0' || i >= IPF_ADDR_SZ)
         break;
       ++p;
     }
-    if (i < ADDR_SZ)
+    if (i < IPF_ADDR_SZ)
       return -(EINVAL);
   }
   /* parse ip6 address string */
   else
   {
-    memcpy(cidr->addr, addr6_init, ADDR_SZ);
+    memcpy(cidr->addr, ipf_addr6_init, IPF_ADDR_SZ);
     /* front to back */
     i = 0;
     for (;;)
     {
       if (*p == ':')
         break;
-      int val = _hex_to_num(p);
+      int val = ipf_hex_to_num(p);
       cidr->addr[i] = (val >> 8) & 0xff;
       cidr->addr[i+1] = val & 0xff;
       i += 2;
       while (*(++p) != ':' && *p != '\0');
-      if (*p == '\0' || i >= ADDR_SZ)
+      if (*p == '\0' || i >= IPF_ADDR_SZ)
         break;
       ++p;
     }
     /* back to front */
-    if (i < ADDR_SZ)
+    if (i < IPF_ADDR_SZ)
     {
       const char * ps = p;
       p = addr_str + len - 1;
       while (*p != ':') --p;
-      i = ADDR_SZ - 2;
+      i = IPF_ADDR_SZ - 2;
       for (;;)
       {
-        int val = _hex_to_num(p + 1);
+        int val = ipf_hex_to_num(p + 1);
         cidr->addr[i] = (val >> 8) & 0xff;
         cidr->addr[i+1] = val & 0xff;
         i -= 2;
@@ -985,7 +993,8 @@ int create_cidr_address_2(cidr_address * cidr,
   return 0;
 }
 
-int create_cidr_address(cidr_address * cidr, const char * cidr_str)
+int ipf_create_cidr_address(ipf_cidr_address * cidr,
+                            const char * cidr_str)
 {
   int prefix;
   const char * p;
@@ -994,19 +1003,19 @@ int create_cidr_address(cidr_address * cidr, const char * cidr_str)
   while (*(--p) != '/' && p > cidr_str);
   if (p == cidr_str)
     return -(EINVAL);
-  prefix = _dec_to_num(p + 1);
-  if (prefix < 0 || prefix > (8 * ADDR_SZ))
+  prefix = ipf_dec_to_num(p + 1);
+  if (prefix < 0 || prefix > (8 * IPF_ADDR_SZ))
     return -(EINVAL);
-  return create_cidr_address_2(cidr, cidr_str, prefix);
+  return ipf_create_cidr_address_2(cidr, cidr_str, prefix);
 }
 
-void init_address_ipv4_mapped(cidr_address * cidr)
+void ipf_init_address_ipv4_mapped(ipf_cidr_address * cidr)
 {
-  memcpy(cidr->addr, addr4_init, ADDR_SZ);
-  cidr->prefix = 128;
+  memcpy(cidr->addr, ipf_addr4_init, IPF_ADDR_SZ);
+  cidr->prefix = (8 * IPF_ADDR_SZ);
 }
 
-static void _set_bit(unsigned char * addr, int bit_no, int v)
+static void ipf_set_bit(unsigned char * addr, int bit_no, int v)
 {
   if (bit_no > 0)
   {
@@ -1022,20 +1031,24 @@ static void _set_bit(unsigned char * addr, int bit_no, int v)
   }
 }
 
-static int _print_rule_ip4(FILE * out, cidr_address * cidr, uint32_t data)
+static int ipf_print_rule_ip4(FILE * out,
+                              ipf_cidr_address * cidr,
+                              uint32_t data)
 {
   fputs(((data & LEAF) == LEAF_ALLOW ? "ALLOW " : "DENY "), out);
   return fprintf(out, "%hhu.%hhu.%hhu.%hhu/%d\n",
-                 cidr->addr[ADDR_SZ - 4], cidr->addr[ADDR_SZ - 3],
-                 cidr->addr[ADDR_SZ - 2], cidr->addr[ADDR_SZ - 1],
+                 cidr->addr[IPF_ADDR_SZ - 4], cidr->addr[IPF_ADDR_SZ - 3],
+                 cidr->addr[IPF_ADDR_SZ - 2], cidr->addr[IPF_ADDR_SZ - 1],
                  cidr->prefix - V4MAPPED_1BIT);
 }
 
-static int _visit_node4(DB * db, FILE * out, cidr_address cidr, uint32_t node_id)
+static int ipf_visit_node4(IPF_DB * db, FILE * out,
+                           ipf_cidr_address cidr,
+                           uint32_t node_id)
 {
   node * _node;
 
-  _node = get_node(db, node_id);
+  _node = ipf_get_node(db, node_id);
   if (!_node)
     return (-1); /* corruption */
 
@@ -1045,35 +1058,37 @@ static int _visit_node4(DB * db, FILE * out, cidr_address cidr, uint32_t node_id
   /* visit left (0) */
   if ((_node->raw0 & LEAF))
   {
-    _set_bit(cidr.addr, cidr.prefix, 0);
-    if (_print_rule_ip4(out, &cidr, _node->raw0) < 0)
+    ipf_set_bit(cidr.addr, cidr.prefix, 0);
+    if (ipf_print_rule_ip4(out, &cidr, _node->raw0) < 0)
       return (-1);
   }
   else if ((_node->raw0 & ADDR))
   {
-    _set_bit(cidr.addr, cidr.prefix, 0);
-    if (_visit_node4(db, out, cidr, _node->raw0) < 0)
+    ipf_set_bit(cidr.addr, cidr.prefix, 0);
+    if (ipf_visit_node4(db, out, cidr, _node->raw0) < 0)
       return (-1);
   }
 
   /* visit right (1) */
   if ((_node->raw1 & LEAF))
   {
-    _set_bit(cidr.addr, cidr.prefix, 1);
-    if (_print_rule_ip4(out, &cidr, _node->raw1) < 0)
+    ipf_set_bit(cidr.addr, cidr.prefix, 1);
+    if (ipf_print_rule_ip4(out, &cidr, _node->raw1) < 0)
       return (-1);
   }
   else if ((_node->raw1 & ADDR))
   {
-    _set_bit(cidr.addr, cidr.prefix, 1);
-    if (_visit_node4(db, out, cidr, _node->raw1) < 0)
+    ipf_set_bit(cidr.addr, cidr.prefix, 1);
+    if (ipf_visit_node4(db, out, cidr, _node->raw1) < 0)
       return (-1);
   }
 
   return 0;
 }
 
-static int _print_rule_ip6(FILE * out, cidr_address * cidr, uint32_t data)
+static int ipf_print_rule_ip6(FILE * out,
+                              ipf_cidr_address * cidr,
+                              uint32_t data)
 {
   int i = 0, cp = -1, cl = 0;
 
@@ -1082,7 +1097,7 @@ static int _print_rule_ip6(FILE * out, cidr_address * cidr, uint32_t data)
   do
   {
     int j = i;
-    while (j < (ADDR_SZ - 1) && cidr->addr[j] == 0 && cidr->addr[j+1] == 0)
+    while (j < (IPF_ADDR_SZ - 1) && cidr->addr[j] == 0 && cidr->addr[j+1] == 0)
       j += 2;
     if ((j - i) > cl)
     {
@@ -1090,7 +1105,7 @@ static int _print_rule_ip6(FILE * out, cidr_address * cidr, uint32_t data)
       cl = j - i;
     }
     i = j + 2;
-  } while (i < ADDR_SZ);
+  } while (i < IPF_ADDR_SZ);
 
   i = 0;
   do
@@ -1098,7 +1113,7 @@ static int _print_rule_ip6(FILE * out, cidr_address * cidr, uint32_t data)
     if (i == cp)
     {
       i += cl;
-      if (i < ADDR_SZ)
+      if (i < IPF_ADDR_SZ)
         fputc(':', out);
       else
         fputs("::", out);
@@ -1113,16 +1128,18 @@ static int _print_rule_ip6(FILE * out, cidr_address * cidr, uint32_t data)
       fprintf(out, "%x", s);
       i += 2;
     }
-  } while (i < ADDR_SZ);
+  } while (i < IPF_ADDR_SZ);
 
   return fprintf(out, "/%d\n", cidr->prefix);
 }
 
-static int _visit_node6(DB * db, FILE * out, cidr_address cidr, uint32_t node_id)
+static int ipf_visit_node6(IPF_DB * db, FILE * out,
+                           ipf_cidr_address cidr,
+                           uint32_t node_id)
 {
   node * _node;
 
-  _node = get_node(db, node_id);
+  _node = ipf_get_node(db, node_id);
   if (!_node)
     return (-1); /* corruption */
 
@@ -1132,45 +1149,45 @@ static int _visit_node6(DB * db, FILE * out, cidr_address cidr, uint32_t node_id
   /* visit left (0) */
   if ((_node->raw0 & LEAF))
   {
-    _set_bit(cidr.addr, cidr.prefix, 0);
-    if (_print_rule_ip6(out, &cidr, _node->raw0) < 0)
+    ipf_set_bit(cidr.addr, cidr.prefix, 0);
+    if (ipf_print_rule_ip6(out, &cidr, _node->raw0) < 0)
       return (-1);
   }
   else if ((_node->raw0 & ADDR))
   {
-    _set_bit(cidr.addr, cidr.prefix, 0);
-    if (_visit_node6(db, out, cidr, _node->raw0) < 0)
+    ipf_set_bit(cidr.addr, cidr.prefix, 0);
+    if (ipf_visit_node6(db, out, cidr, _node->raw0) < 0)
       return (-1);
   }
 
   /* visit right (1) */
   if ((_node->raw1 & LEAF))
   {
-    _set_bit(cidr.addr, cidr.prefix, 1);
-    if (_print_rule_ip6(out, &cidr, _node->raw1) < 0)
+    ipf_set_bit(cidr.addr, cidr.prefix, 1);
+    if (ipf_print_rule_ip6(out, &cidr, _node->raw1) < 0)
       return (-1);
   }
   else if ((_node->raw1 & ADDR))
   {
-    _set_bit(cidr.addr, cidr.prefix, 1);
-    if (_visit_node6(db, out, cidr, _node->raw1) < 0)
+    ipf_set_bit(cidr.addr, cidr.prefix, 1);
+    if (ipf_visit_node6(db, out, cidr, _node->raw1) < 0)
       return (-1);
   }
 
   return 0;
 }
 
-int export_db(DB * db, FILE * out)
+int ipf_export_db(IPF_DB * db, FILE * out)
 {
   int r = 0;
-  cidr_address cidr;
+  ipf_cidr_address cidr;
 
-  memcpy(cidr.addr, addr4_init, ADDR_SZ);
+  memcpy(cidr.addr, ipf_addr4_init, IPF_ADDR_SZ);
   cidr.prefix = V4MAPPED_1BIT;
-  r |= _visit_node4(db, out, cidr, db->header->root4_addr);
+  r |= ipf_visit_node4(db, out, cidr, db->header->root4_addr);
 
-  memcpy(cidr.addr, addr6_init, ADDR_SZ);
+  memcpy(cidr.addr, ipf_addr6_init, IPF_ADDR_SZ);
   cidr.prefix = 0;
-  r |= _visit_node6(db, out, cidr, db->header->root6_addr);
+  r |= ipf_visit_node6(db, out, cidr, db->header->root6_addr);
   return r;
 }

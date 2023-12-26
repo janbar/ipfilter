@@ -41,7 +41,7 @@ typedef struct
   ngx_str_t*    denied_url;
   ngx_str_t*    db_file;
 
-  DB*           db_instance;
+  IPF_DB*       db_instance;
   size_t        request_processed;
   size_t        request_blocked;
 } ngx_http_ipfilter_loc_conf_t;

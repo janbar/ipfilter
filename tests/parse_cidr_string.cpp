@@ -7,11 +7,11 @@
 #define CATCH_CONFIG_MAIN
 #include "catch.hpp"
 
-static cidr_address cidr;
+static ipf_cidr_address cidr;
 
 TEST_CASE("Parse CIDR from IPv4 string")
 {
-  create_cidr_address(&cidr, "192.168.2.254/32");
+  ipf_create_cidr_address(&cidr, "192.168.2.254/32");
   REQUIRE( cidr.addr[0] == 0);
   REQUIRE( cidr.addr[1] == 0);
   REQUIRE( cidr.addr[2] == 0);
@@ -33,7 +33,7 @@ TEST_CASE("Parse CIDR from IPv4 string")
 
 TEST_CASE("Parse CIDR from IPv4 mapped string")
 {
-  create_cidr_address(&cidr, "::FFFF:192.168.2.254/112");
+  ipf_create_cidr_address(&cidr, "::FFFF:192.168.2.254/112");
   REQUIRE( cidr.addr[0] == 0);
   REQUIRE( cidr.addr[1] == 0);
   REQUIRE( cidr.addr[2] == 0);
@@ -55,7 +55,7 @@ TEST_CASE("Parse CIDR from IPv4 mapped string")
 
 TEST_CASE("Parse CIDR from IPv6 string")
 {
-  create_cidr_address(&cidr, "2A01:CB08:1C4:E700:C24A:FF:FE09:56B7/128");
+  ipf_create_cidr_address(&cidr, "2A01:CB08:1C4:E700:C24A:FF:FE09:56B7/128");
   REQUIRE( cidr.addr[0] == 0x2A);
   REQUIRE( cidr.addr[1] == 0x01);
   REQUIRE( cidr.addr[2] == 0xCB);
@@ -77,7 +77,7 @@ TEST_CASE("Parse CIDR from IPv6 string")
 
 TEST_CASE("Parse CIDR from IPv6 L string")
 {
-  create_cidr_address(&cidr, "2001:470:0:7B::/64");
+  ipf_create_cidr_address(&cidr, "2001:470:0:7B::/64");
   REQUIRE( cidr.addr[0] == 0x20);
   REQUIRE( cidr.addr[1] == 0x01);
   REQUIRE( cidr.addr[2] == 0x04);
@@ -99,7 +99,7 @@ TEST_CASE("Parse CIDR from IPv6 L string")
 
 TEST_CASE("Parse CIDR from IPv6 R string")
 {
-  create_cidr_address(&cidr, "::CB08:460:E0/124");
+  ipf_create_cidr_address(&cidr, "::CB08:460:E0/124");
   REQUIRE( cidr.addr[0] == 0x00);
   REQUIRE( cidr.addr[1] == 0x00);
   REQUIRE( cidr.addr[2] == 0x00);
@@ -121,7 +121,7 @@ TEST_CASE("Parse CIDR from IPv6 R string")
 
 TEST_CASE("Parse CIDR from IPv6 LR string")
 {
-  create_cidr_address(&cidr, "2001:470:0:1B0::8000:0/97");
+  ipf_create_cidr_address(&cidr, "2001:470:0:1B0::8000:0/97");
   REQUIRE( cidr.addr[0] == 0x20);
   REQUIRE( cidr.addr[1] == 0x01);
   REQUIRE( cidr.addr[2] == 0x04);

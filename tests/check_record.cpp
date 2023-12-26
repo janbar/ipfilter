@@ -8,18 +8,18 @@
 #include "catch.hpp"
 
 static const char * tmpdb = "tmp.db";
-static DB * db;
+static IPF_DB * db;
 
 TEST_CASE("mount ro")
 {
-  db = mount_db(tmpdb, 0);
+  db = ipf_mount_db(tmpdb, 0);
   REQUIRE(db != NULL);
 }
 
 TEST_CASE("check existing")
 {
-  cidr_address cidr;
-  init_address_ipv4_mapped(&cidr);
+  ipf_cidr_address cidr;
+  ipf_init_address_ipv4_mapped(&cidr);
   cidr.addr[12] = 192;
   cidr.addr[13] = 168;
   cidr.addr[14] = 0;
@@ -30,30 +30,30 @@ TEST_CASE("check existing")
     for (int j = 0; j < 255; ++j)
     {
       cidr.addr[15] = j & 0xff;
-      REQUIRE(find_record(db, &cidr) == ((i & 0x1) ? db_allow : db_deny));
+      REQUIRE(ipf_query(db, &cidr) == ((i & 0x1) ? ipf_allow : ipf_deny));
       cidr.addr[15] = (++j) & 0xff;
-      REQUIRE(find_record(db, &cidr) == ((i & 0x1) ? db_deny : db_allow));
+      REQUIRE(ipf_query(db, &cidr) == ((i & 0x1) ? ipf_deny : ipf_allow));
     }
   }
 
-  create_cidr_address(&cidr, "2A0F:CA80:616:2CE::/80");
+  ipf_create_cidr_address(&cidr, "2A0F:CA80:616:2CE::/80");
   for (int i = 0; i < 64; ++i)
   {
     cidr.addr[8] = i & 0xff;
     for (int j = 0; j < 255; ++j)
     {
       cidr.addr[9] = j & 0xff;
-      REQUIRE(find_record(db, &cidr) == ((i & 0x1) ? db_allow : db_deny));
+      REQUIRE(ipf_query(db, &cidr) == ((i & 0x1) ? ipf_allow : ipf_deny));
       cidr.addr[9] = (++j) & 0xff;
-      REQUIRE(find_record(db, &cidr) == ((i & 0x1) ? db_deny : db_allow));
+      REQUIRE(ipf_query(db, &cidr) == ((i & 0x1) ? ipf_deny : ipf_allow));
     }
   }
 }
 
 TEST_CASE("check not found")
 {
-  cidr_address cidr;
-  init_address_ipv4_mapped(&cidr);
+  ipf_cidr_address cidr;
+  ipf_init_address_ipv4_mapped(&cidr);
   cidr.addr[12] = 192;
   cidr.addr[13] = 168;
   cidr.addr[14] = 0;
@@ -64,24 +64,24 @@ TEST_CASE("check not found")
     for (int j = 0; j < 255; ++j)
     {
       cidr.addr[15] = j & 0xff;
-      REQUIRE(find_record(db, &cidr) == db_not_found);
+      REQUIRE(ipf_query(db, &cidr) == ipf_not_found);
     }
   }
 
-  create_cidr_address(&cidr, "2A0F:CA80:616:2CF::/80");
+  ipf_create_cidr_address(&cidr, "2A0F:CA80:616:2CF::/80");
   for (int i = 0; i < 64; ++i)
   {
     cidr.addr[8] = i & 0xff;
     for (int j = 0; j < 255; ++j)
     {
       cidr.addr[9] = j & 0xff;
-      REQUIRE(find_record(db, &cidr) == db_not_found);
+      REQUIRE(ipf_query(db, &cidr) == ipf_not_found);
     }
   }
 }
 
 TEST_CASE("close")
 {
-  close_db(&db);
+  ipf_close_db(&db);
   REQUIRE(db == NULL);
 }

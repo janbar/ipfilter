@@ -43,10 +43,10 @@ static const char * getCmd(char **begin, char **end, const std::string& option);
 static const char * getCmdOption(char **begin, char **end, const std::string& option);
 static void readInStream();
 
-int load_cidr_file(DB * db, const char * filepath, db_rule rule);
-int load_rule_file(DB * db, const char * filepath);
+int load_cidr_file(IPF_DB * db, const char * filepath, ipf_rule rule);
+int load_rule_file(IPF_DB * db, const char * filepath);
 
-static DB * g_db = nullptr;
+static IPF_DB * g_db = nullptr;
 
 /*
  * the main function
@@ -62,12 +62,12 @@ int main(int argc, char** argv)
     return EXIT_SUCCESS;
   }
 
-  PRINT1("IPFILTER CLI (%s), Copyright (C) 2023 Jean-Luc Barriere\n", db_format());
+  PRINT1("IPFILTER CLI (%s), Copyright (C) 2023 Jean-Luc Barriere\n", ipf_db_format());
 
   readInStream();
 
   if (g_db)
-    close_db(&g_db);
+    ipf_close_db(&g_db);
 
   return ret;
 }
@@ -163,8 +163,8 @@ static bool parseCommand(const std::string& line)
       if (++it != tokens.end())
         sscanf((*it).c_str(), "%d", &sz);
       if (g_db)
-        close_db(&g_db);
-      g_db = create_db(filepath.c_str(), "noname", sz);
+        ipf_close_db(&g_db);
+      g_db = ipf_create_db(filepath.c_str(), "noname", sz);
       if (g_db)
         PERROR("Succeeded\n");
       else
@@ -173,12 +173,12 @@ static bool parseCommand(const std::string& line)
     else if (token == "SETNAME")
     {
       if (++it != tokens.end() && g_db)
-        rename_db(g_db, it->c_str());
+        ipf_rename_db(g_db, it->c_str());
     }
     else if (token == "STATUS")
     {
       if (g_db)
-        stat_db(g_db);
+        ipf_stat_db(g_db, stdout);
     }
     else if (token == "EXPORT")
     {
@@ -191,7 +191,7 @@ static bool parseCommand(const std::string& line)
           FILE * out = ::fopen(filepath.c_str(), "w");
           if (out)
           {
-            if (export_db(g_db, out) < 0)
+            if (ipf_export_db(g_db, out) < 0)
               PERROR1("Error: Export failed (%d)\n", LASTERROR);
             else
               PERROR("Succeeded\n");
@@ -202,7 +202,7 @@ static bool parseCommand(const std::string& line)
         }
         else
         {
-          if (export_db(g_db, stdout) < 0)
+          if (ipf_export_db(g_db, stdout) < 0)
             PERROR1("Error: Export failed (%d)\n", LASTERROR);
         }
       }
@@ -217,7 +217,7 @@ static bool parseCommand(const std::string& line)
         upstr(param);
         if (param == "FORCE")
         {
-          purge_db(g_db);
+          ipf_purge_db(g_db);
           PERROR("Database has been purged\n");
         }
       }
@@ -229,24 +229,24 @@ static bool parseCommand(const std::string& line)
       if (++it != tokens.end() && g_db)
       {
         std::string param(*it);
-        cidr_address cidr;
-        if (create_cidr_address(&cidr, param.c_str()) == 0)
+        ipf_cidr_address cidr;
+        if (ipf_create_cidr_address(&cidr, param.c_str()) == 0)
         {
           double t0 = timestamp();
-          int r = find_record(g_db, &cidr);
+          int r = ipf_query(g_db, &cidr);
           double d = timestamp() - t0;
           switch (r)
           {
-          case db_not_found:
+          case ipf_not_found:
             PRINT1("[ empty ] elap: %f sec\n", d);
             break;
-          case db_allow:
+          case ipf_allow:
             PRINT1("[ allow ] elap: %f sec\n", d);
             break;
-          case db_deny:
+          case ipf_deny:
             PRINT1("[ deny  ] elap: %f sec\n", d);
             break;
-          case db_error:
+          case ipf_error:
             PERROR1("Error: %d\n", LASTERROR);
             break;
           }
@@ -262,15 +262,15 @@ static bool parseCommand(const std::string& line)
       if (++it != tokens.end() && g_db)
       {
         std::string param(*it);
-        cidr_address cidr;
-        if (create_cidr_address(&cidr, param.c_str()) == 0)
+        ipf_cidr_address cidr;
+        if (ipf_create_cidr_address(&cidr, param.c_str()) == 0)
         {
           double t0 = timestamp();
-          db_response r = insert_cidr(g_db, &cidr, rule_allow);
+          ipf_response r = ipf_insert_rule(g_db, &cidr, ipf_rule_allow);
           double d = timestamp() - t0;
-          if (r == db_allow)
+          if (r == ipf_allow)
             PRINT("Already exists\n");
-          else if (r == db_not_found)
+          else if (r == ipf_not_found)
             PRINT1("Inserted, elap: %f sec\n", d);
           else
             PERROR1("Error: %d\n", LASTERROR);
@@ -286,15 +286,15 @@ static bool parseCommand(const std::string& line)
       if (++it != tokens.end() && g_db)
       {
         std::string param(*it);
-        cidr_address cidr;
-        if (create_cidr_address(&cidr, param.c_str()) == 0)
+        ipf_cidr_address cidr;
+        if (ipf_create_cidr_address(&cidr, param.c_str()) == 0)
         {
           double t0 = timestamp();
-          db_response r = insert_cidr(g_db, &cidr, rule_deny);
+          ipf_response r = ipf_insert_rule(g_db, &cidr, ipf_rule_deny);
           double d = timestamp() - t0;
-          if (r == db_deny)
+          if (r == ipf_deny)
             PRINT("Entry already exists\n");
-          else if (r == db_not_found)
+          else if (r == ipf_not_found)
             PRINT1("Inserted, elap: %f sec\n", d);
           else
             PERROR1("Error: %d\n", LASTERROR);
@@ -319,13 +319,13 @@ static bool parseCommand(const std::string& line)
           if (rule == "ALLOW")
           {
             d = timestamp();
-            r = load_cidr_file(g_db, param.c_str(), rule_allow);
+            r = load_cidr_file(g_db, param.c_str(), ipf_rule_allow);
             d = timestamp() - d;
           }
           else if (rule == "DENY")
           {
             d = timestamp();
-            r = load_cidr_file(g_db, param.c_str(), rule_deny);
+            r = load_cidr_file(g_db, param.c_str(), ipf_rule_deny);
             d = timestamp() - d;
           }
           else if (rule == "RULE")
@@ -351,8 +351,8 @@ static bool parseCommand(const std::string& line)
       {
         std::string param(*it);
         if (g_db)
-          close_db(&g_db);
-        g_db = mount_db(param.c_str(), 1);
+          ipf_close_db(&g_db);
+        g_db = ipf_mount_db(param.c_str(), 1);
         if (g_db)
           PRINT("Mounted\n");
         else
@@ -371,7 +371,7 @@ static bool parseCommand(const std::string& line)
 
 static void prompt() {
   if (g_db)
-    PRINT1("%s >>> ", db_name(g_db));
+    PRINT1("%s >>> ", ipf_db_name(g_db));
   else
     PRINT(">>> ");
   FLUSHOUT();
@@ -458,7 +458,7 @@ static unsigned _readln(char * buf, unsigned n, FILE * file)
   return r;
 }
 
-int load_cidr_file(DB * db, const char * filepath, db_rule rule)
+int load_cidr_file(IPF_DB * db, const char * filepath, ipf_rule rule)
 {
   FILE* file = fopen(filepath, "r");
   char line[256];
@@ -484,10 +484,10 @@ int load_cidr_file(DB * db, const char * filepath, db_rule rule)
     if (token.at(0) == '#')
       continue;
     /* parse CIDR address */
-    cidr_address adr;
-    if (create_cidr_address(&adr, token.c_str()) < 0)
+    ipf_cidr_address adr;
+    if (ipf_create_cidr_address(&adr, token.c_str()) < 0)
       break;
-    if (insert_cidr(db, &adr, rule) == db_error)
+    if (ipf_insert_rule(db, &adr, rule) == ipf_error)
       break;
     if (!(c & 0xff))
     {
@@ -499,7 +499,7 @@ int load_cidr_file(DB * db, const char * filepath, db_rule rule)
   PRINT1(" %u\n", c);
   fclose(file);
   if (c > 0)
-    db_updated(db);
+    ipf_db_updated(db);
   if (r == 0)
     return 0;
   line[r] = '\0';
@@ -507,7 +507,7 @@ int load_cidr_file(DB * db, const char * filepath, db_rule rule)
   return -(EINVAL);
 }
 
-int load_rule_file(DB * db, const char * filepath)
+int load_rule_file(IPF_DB * db, const char * filepath)
 {
   FILE* file = fopen(filepath, "r");
   char line[256];
@@ -533,22 +533,22 @@ int load_rule_file(DB * db, const char * filepath)
     if (token.at(0) == '#')
       continue;
     /* parse RULE */
-    db_rule rule;
+    ipf_rule rule;
     upstr(token);
     if (token == "ALLOW")
-      rule = rule_allow;
+      rule = ipf_rule_allow;
     else if (token == "DENY")
-      rule = rule_deny;
+      rule = ipf_rule_deny;
     else
       break;
     /* parse CIDR address */
     if (it == tokens.end())
       break;
     token.assign(*(++it));
-    cidr_address adr;
-    if (create_cidr_address(&adr, token.c_str()) < 0)
+    ipf_cidr_address adr;
+    if (ipf_create_cidr_address(&adr, token.c_str()) < 0)
       break;
-    if (insert_cidr(db, &adr, rule) == db_error)
+    if (ipf_insert_rule(db, &adr, rule) == ipf_error)
       break;
     if (!(c & 0xff))
     {
@@ -560,7 +560,7 @@ int load_rule_file(DB * db, const char * filepath)
   PRINT1(" %u\n", c);
   fclose(file);
   if (c > 0)
-    db_updated(db);
+    ipf_db_updated(db);
   if (r == 0)
     return 0;
   line[r] = '\0';

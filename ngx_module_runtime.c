@@ -24,7 +24,7 @@ ngx_http_ipfilter_data_parse(ngx_http_request_ctx_t* ctx,
                              ngx_http_request_t* r,
                              ngx_http_ipfilter_loc_conf_t* cf)
 {
-  cidr_address cidr;
+  ipf_cidr_address cidr;
   ngx_addr_t addr;
   in_addr_t inaddr;
   struct sockaddr_in *sin;
@@ -55,7 +55,7 @@ ngx_http_ipfilter_data_parse(ngx_http_request_ctx_t* ctx,
   case AF_INET:
     sin = (struct sockaddr_in *) addr.sockaddr;
     inaddr = ntohl(sin->sin_addr.s_addr);
-    init_address_ipv4_mapped(&cidr);
+    ipf_init_address_ipv4_mapped(&cidr);
     cidr.addr[12] = (inaddr >> 24) & 0xff;
     cidr.addr[13] = (inaddr >> 16) & 0xff;
     cidr.addr[14] = (inaddr >> 8) & 0xff;
@@ -68,7 +68,7 @@ ngx_http_ipfilter_data_parse(ngx_http_request_ctx_t* ctx,
     return;
   }
 
-  ctx->response = find_record(cf->db_instance, &cidr);
+  ctx->response = ipf_query(cf->db_instance, &cidr);
 }
 
 ngx_int_t

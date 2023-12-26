@@ -9,7 +9,7 @@
 #include "catch.hpp"
 
 static const char * tmpdb = "tmp.db";
-static DB * db;
+static IPF_DB * db;
 
 static const char * sample_rules[] = {
   "ALLOW ::ffff:1.179.112.0/116",
@@ -69,7 +69,7 @@ static unsigned _readln(char * buf, unsigned n, FILE * file)
   return r;
 }
 
-static uint32_t _hash(uint32_t maxsize, const char * buf, unsigned len)
+static uint32_t ipf_hash(uint32_t maxsize, const char * buf, unsigned len)
 {
   /*
    * DJB Hash Function
@@ -95,7 +95,7 @@ static std::string& upstr(std::string& str)
   return str;
 }
 
-static int load_rules(DB * db)
+static int load_rules(IPF_DB * db)
 {
   const char * line;
   unsigned r = 0, l = 0;
@@ -116,27 +116,27 @@ static int load_rules(DB * db)
     if (token.at(0) == '#')
       continue;
     /* parse RULE */
-    db_rule rule;
+    ipf_rule rule;
     upstr(token);
     if (token == "ALLOW")
-      rule = rule_allow;
+      rule = ipf_rule_allow;
     else if (token == "DENY")
-      rule = rule_deny;
+      rule = ipf_rule_deny;
     else
       break;
     /* parse CIDR address */
     if (it == tokens.end())
       break;
     token.assign(*(++it));
-    cidr_address adr;
-    if (create_cidr_address(&adr, token.c_str()) < 0)
+    ipf_cidr_address adr;
+    if (ipf_create_cidr_address(&adr, token.c_str()) < 0)
       break;
-    if (insert_cidr(db, &adr, rule) == db_error)
+    if (ipf_insert_rule(db, &adr, rule) == ipf_error)
       break;
     ++l;
   }
   if (l > 0)
-    db_updated(db);
+    ipf_db_updated(db);
   if (r == 0)
     return 0;
   return -(EINVAL);
@@ -144,9 +144,9 @@ static int load_rules(DB * db)
 
 TEST_CASE("mount rw")
 {
-  db = mount_db(tmpdb, 1);
+  db = ipf_mount_db(tmpdb, 1);
   REQUIRE(db != NULL);
-  purge_db(db);
+  ipf_purge_db(db);
 }
 
 TEST_CASE("import")
@@ -156,26 +156,26 @@ TEST_CASE("import")
 
 TEST_CASE("check records")
 {
-  cidr_address cidr;
-  create_cidr_address(&cidr, "::FFFF:1.186.218.15/124");
-  REQUIRE(find_record(db, &cidr) == db_allow);
-  create_cidr_address(&cidr, "::FFFF:193.251.254.117/128");
-  REQUIRE(find_record(db, &cidr) == db_deny);
-  create_cidr_address(&cidr, "::FFFF:193.251.254.118/128");
-  REQUIRE(find_record(db, &cidr) == db_allow);
-  create_cidr_address(&cidr, "2A01:CB04:34D:300:16CC:20FF:FEF8:805E/128");
-  REQUIRE(find_record(db, &cidr) == db_allow);
-  create_cidr_address(&cidr, "2A0D:82C1:5054::FE7A:605A/128");
-  REQUIRE(find_record(db, &cidr) == db_deny);
-  create_cidr_address(&cidr, "2C0F:FEB0:21::683A:6/129");
-  REQUIRE(find_record(db, &cidr) == db_deny);
+  ipf_cidr_address cidr;
+  ipf_create_cidr_address(&cidr, "::FFFF:1.186.218.15/124");
+  REQUIRE(ipf_query(db, &cidr) == ipf_allow);
+  ipf_create_cidr_address(&cidr, "::FFFF:193.251.254.117/128");
+  REQUIRE(ipf_query(db, &cidr) == ipf_deny);
+  ipf_create_cidr_address(&cidr, "::FFFF:193.251.254.118/128");
+  REQUIRE(ipf_query(db, &cidr) == ipf_allow);
+  ipf_create_cidr_address(&cidr, "2A01:CB04:34D:300:16CC:20FF:FEF8:805E/128");
+  REQUIRE(ipf_query(db, &cidr) == ipf_allow);
+  ipf_create_cidr_address(&cidr, "2A0D:82C1:5054::FE7A:605A/128");
+  REQUIRE(ipf_query(db, &cidr) == ipf_deny);
+  ipf_create_cidr_address(&cidr, "2C0F:FEB0:21::683A:6/129");
+  REQUIRE(ipf_query(db, &cidr) == ipf_deny);
 }
 
 TEST_CASE("export")
 {
   FILE * file = fopen("tmp.txt", "w+");
   REQUIRE(file != NULL);
-  REQUIRE(export_db(db, file) == 0);
+  REQUIRE(ipf_export_db(db, file) == 0);
   fclose(file);
 
   file = fopen("tmp.txt", "r");
@@ -186,7 +186,7 @@ TEST_CASE("export")
   snprintf(line, 11, "%08x: ", h);
   while ((r = _readln(line + 10, sizeof (line) - 11, file)))
   {
-    h = _hash(0xffffffff, line, r + 10);
+    h = ipf_hash(0xffffffff, line, r + 10);
     snprintf(line, 11, "%08x: ", h);
   }
   fclose(file);
@@ -196,6 +196,6 @@ TEST_CASE("export")
 
 TEST_CASE("close")
 {
-  close_db(&db);
+  ipf_close_db(&db);
   REQUIRE(db == NULL);
 }

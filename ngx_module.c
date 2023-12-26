@@ -192,7 +192,7 @@ ngx_http_ipfilter_init(ngx_conf_t* cf)
       continue;
 
     /* mount db in read-only mode */
-    DB* db = mount_db((char*) loc_cf[i]->db_file->data, 0);
+    IPF_DB* db = ipf_mount_db((char*) loc_cf[i]->db_file->data, 0);
     if (!db)
     {
       ngx_conf_log_error(NGX_LOG_EMERG, cf, 0,
@@ -394,13 +394,13 @@ ngx_http_ipfilter_get_variable(ngx_http_request_t *r, ngx_http_variable_value_t 
   v->data = ngx_pcalloc(r->pool, 1);
   switch (ctx->response)
   {
-  case db_not_found:
+  case ipf_not_found:
     *(v->data) = '0';
     break;
-  case db_allow:
+  case ipf_allow:
     *(v->data) = '1';
     break;
-  case db_deny:
+  case ipf_deny:
     *(v->data) = '2';
     break;
   default:
@@ -487,11 +487,11 @@ ngx_http_ipfilter_access_handler(ngx_http_request_t* r)
   {
     switch (ctx->response)
     {
-    case db_allow:
+    case ipf_allow:
       NX_DEBUG(_debug_mechanics, NGX_LOG_DEBUG_HTTP, r->connection->log, 0,
                IPFILTER_TAG " DECLINED");
       return NGX_DECLINED;
-    case db_error:
+    case ipf_error:
       ngx_log_error(NGX_LOG_ALERT, r->connection->log, 0,
                     IPFILTER_TAG " DATABASE QUERY FAILED (%d).", errno);
       break;
