@@ -138,11 +138,11 @@ static bool parseCommand(const std::string& line)
       PRINT("STATUS\n");
       PRINT("  Show statistics of the database.\n\n");
       PRINT("ALLOW {CIDR}\n");
-      PRINT("  Insert a rule allow CIDR (n.n.n.n/n).\n\n");
+      PRINT("  Insert a rule allow CIDR (d.d.d.d/d or x::x/d).\n\n");
       PRINT("DENY {CIDR}\n");
-      PRINT("  Insert a rule deny CIDR (n.n.n.n/n).\n\n");
+      PRINT("  Insert a rule deny CIDR (d.d.d.d/d or x::x/d).\n\n");
       PRINT("TEST {CIDR}\n");
-      PRINT("  Test matching for CIDR (n.n.n.n/n)\n\n");
+      PRINT("  Test matching for CIDR (d.d.d.d/d or x::x/d).\n\n");
       PRINT("LOAD ALLOW|DENY {file path}\n");
       PRINT("  Fill database with contents of CIDR file.\n\n");
       PRINT("LOAD RULE {file path}\n");
@@ -151,8 +151,7 @@ static bool parseCommand(const std::string& line)
       PRINT("  Export the database rules to output or file.\n\n");
       PRINT("PURGE FORCE\n");
       PRINT("  Clear the database.\n\n");
-      PRINT("Type HELP to print this help.\n");
-      PRINT("\n");
+      PRINT("Type HELP to print this help.\n\n");
     }
     else if (token == "CREATE")
     {
@@ -174,11 +173,15 @@ static bool parseCommand(const std::string& line)
     {
       if (++it != tokens.end() && g_db)
         ipf_rename_db(g_db, it->c_str());
+      else
+        PERROR("Error: Invalid context\n");
     }
     else if (token == "STATUS")
     {
       if (g_db)
         ipf_stat_db(g_db, stdout);
+      else
+        PERROR("Error: Invalid context\n");
     }
     else if (token == "EXPORT")
     {
