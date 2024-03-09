@@ -1097,8 +1097,9 @@ static int ipf_visit_node4(IPF_DB * db, FILE * out,
   node * _node;
 
   _node = ipf_get_node(db, node_id);
-  if (!_node)
-    return (-1); /* corruption */
+  /* corruption could occur in race condition with a database update */
+  if (!_node || cidr.prefix > (8 * IPF_ADDR_SZ - 1))
+    return (-1);
 
   /* processing next bit */
   cidr.prefix++;
