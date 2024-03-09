@@ -360,13 +360,13 @@ static int ipf_add_segment(IPF_DB * db)
 
 /**
  * Returns a pointer to node
- * WARNING: no check of the vector address is done, therefore the given value
- * must be checked before calling this: i.e (node_id & ADDR) != 0.
  */
 static node * ipf_get_node(IPF_DB * db, uint32_t node_id)
 {
   uint16_t seg_no = (node_id >> 16) & SEG_RANGE;
   uint16_t pos_no = node_id & NOD_RANGE;
+  if (seg_no == 0)
+    return NULL;
   if (seg_no > db->cache.seg_nb)
   {
     /* it is a corruption else the database has been extended */
