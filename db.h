@@ -31,7 +31,7 @@ extern "C"
 typedef struct
 {
   unsigned char addr[IPF_ADDR_SZ];  /* IPv6 or IPv4 mapped IPv6 */
-  int prefix;                   /* subnet bit mask (0..128) */
+  int prefix;                       /* subnet bit mask (0..128) */
 } ipf_cidr_address;
 
 /* define opaque DB struct */
