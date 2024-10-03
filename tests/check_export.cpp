@@ -107,7 +107,7 @@ static int load_rules(IPF_DB * db)
       break;
     /* parse line */
     std::vector<std::string> tokens;
-    tokenize(line, " ", tokens, true);
+    tokenize(line, " ", "", tokens, true);
     std::vector<std::string>::const_iterator it = tokens.begin();
     if (it == tokens.end())
       continue;

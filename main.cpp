@@ -114,7 +114,7 @@ static double timestamp()
 static bool parseCommand(const std::string& line)
 {
   std::vector<std::string> tokens;
-  tokenize(line, " ", tokens, true);
+  tokenize(line, " ", "\"", tokens, true);
   std::vector<std::string>::const_iterator it = tokens.begin();
   if (it != tokens.end())
   {
@@ -478,7 +478,7 @@ int load_cidr_file(IPF_DB * db, const char * filepath, ipf_rule rule)
     line[r - 1] = '\0';
     /* parse line */
     std::vector<std::string> tokens;
-    tokenize(line, " ", tokens, true);
+    tokenize(line, " ", "", tokens, true);
     std::vector<std::string>::const_iterator it = tokens.begin();
     if (it == tokens.end())
       continue;
@@ -527,7 +527,7 @@ int load_rule_file(IPF_DB * db, const char * filepath)
     line[r - 1] = '\0';
     /* parse line */
     std::vector<std::string> tokens;
-    tokenize(line, " ", tokens, true);
+    tokenize(line, " ", "", tokens, true);
     std::vector<std::string>::const_iterator it = tokens.begin();
     if (it == tokens.end())
       continue;
