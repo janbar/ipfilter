@@ -32,23 +32,25 @@
 
 extern ngx_module_t ngx_http_ipfilter_module;
 
-  /* TOP level configuration structure */
+/* The LOCATION configuration structure of the module */
 typedef struct
 {
-  ngx_flag_t    pushed;
-  ngx_flag_t    enabled;
-  ngx_flag_t    redirect;
+  ngx_flag_t    pushed;             /* conf is registered */
+  ngx_flag_t    enabled;            /* conf is enabled */
+  ngx_flag_t    redirect;           /* redirect to denied url */
   ngx_str_t*    denied_url;
-  ngx_str_t*    db_file;
+  ngx_str_t*    db_file;            /* path of database to use */
 
-  IPF_DB*       db_instance;
-  size_t        request_processed;
-  size_t        request_blocked;
+  IPF_DB*       db_instance;        /* handle of db instance */
+  size_t        request_processed;  /* counter */
+  size_t        request_blocked;    /* counter */
 } ngx_http_ipfilter_loc_conf_t;
 
+/* The MAIN configuration structure of the module */
 typedef struct
 {
-  ngx_array_t* locations; /*ngx_http_ipfilter_loc_conf_t*/
+  /* registered locations (ngx_http_ipfilter_loc_conf_t) */
+  ngx_array_t* locations;
 } ngx_http_ipfilter_main_conf_t;
 
 typedef struct

@@ -206,6 +206,9 @@ ngx_http_ipfilter_init(ngx_conf_t* cf)
   return (NGX_OK);
 }
 
+/*
+ * Enable the location.
+ */
 static char*
 ngx_http_ipfilter_enable_loc_conf(ngx_conf_t* cf, ngx_command_t* cmd, void* conf)
 {
@@ -228,6 +231,9 @@ ngx_http_ipfilter_enable_loc_conf(ngx_conf_t* cf, ngx_command_t* cmd, void* conf
   return (NGX_CONF_OK);
 }
 
+/*
+ * Configure the denied url for the location and set flag redirect.
+ */
 static char*
 ngx_http_ipfilter_du_loc_conf(ngx_conf_t* cf, ngx_command_t* cmd, void* conf)
 {
@@ -270,6 +276,9 @@ ngx_http_ipfilter_du_loc_conf(ngx_conf_t* cf, ngx_command_t* cmd, void* conf)
   return NGX_CONF_ERROR;
 }
 
+/*
+ * Configure the database to use for the location.
+ */
 static char*
 ngx_http_ipfilter_db_loc_conf(ngx_conf_t* cf, ngx_command_t* cmd, void* conf)
 {
