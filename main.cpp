@@ -41,6 +41,7 @@
 
 static const char * getCmd(char **begin, char **end, const std::string& option);
 static const char * getCmdOption(char **begin, char **end, const std::string& option);
+static bool parseCommand(const std::string& line, bool& failed);
 static void readInStream();
 
 int load_cidr_file(IPF_DB * db, const char * filepath, ipf_rule rule);
@@ -54,16 +55,59 @@ static IPF_DB * g_db = nullptr;
 int main(int argc, char** argv)
 {
   int ret = 0;
+  char** end = argv + argc;
+  char** cur = argv;
 
-  if (getCmd(argv, argv + argc, "--help") || getCmd(argv, argv + argc, "-h"))
+  if (getCmd(cur, end, "--help") || getCmd(cur, end, "-h"))
   {
-    PRINT("\n  --help | -h\n\n");
-    PRINT("  Print the command usage.\n\n");
+    PRINT("  -s                           Do not print the banner\n");
+    PRINT("  -d <database file path>      Mount the database\n");
+    PRINT("  -c \"<command>\" ...           Execute all commands to follow and exit\n");
+    PRINT("  --help | -h                  Show help and exit\n\n");
     return EXIT_SUCCESS;
   }
+  /* print header unless silence is requested */
+  if (!getCmd(cur, end, "-s"))
+  {
+    PRINT1("IPFILTER CLI (%s), Copyright (C) 2023 Jean-Luc Barriere\n", ipf_db_format());
+  }
+  /* processing all others arguments */
+  while (++cur < end)
+  {
+    if (strcmp(*cur, "-d") == 0)
+    {
+      if (++cur >= end)
+      {
+        PERROR("Error: Missing argument\n");
+        return EXIT_FAILURE;
+      }
+      if (g_db)
+        ipf_close_db(&g_db);
+      g_db = ipf_mount_db(*cur, 1);
+      if (g_db == nullptr)
+      {
+        PERROR1("Error: Database not mounted (%d)\n", LASTERROR);
+        return EXIT_FAILURE;
+      }
+    }
+    else if (strcmp(*cur, "-c") == 0)
+    {
+      /* the arguments to follow are commands to execute */
+      bool failed = false;
+      /* break on first failure */
+      while (!failed && ++cur < end)
+      {
+        if (!parseCommand(*cur, failed))
+          break;
+      }
+      /* close database gracefully and exit */
+      if (g_db)
+        ipf_close_db(&g_db);
+      return (failed ? EXIT_FAILURE : EXIT_SUCCESS);
+    }
+  }
 
-  PRINT1("IPFILTER CLI (%s), Copyright (C) 2023 Jean-Luc Barriere\n", ipf_db_format());
-
+  /* start interactive mode */
   readInStream();
 
   if (g_db)
@@ -86,8 +130,8 @@ static const char * getCmdOption(char **begin, char **end, const std::string& op
 {
   for (char** it = begin; it != end; ++it)
   {
-    if (strncmp(*it, option.c_str(), option.length()) == 0 && (*it)[option.length()] == '=')
-      return &((*it)[option.length() + 1]);
+    if (strncmp(*it, option.c_str(), option.length()) == 0 && ((it + 1) != end))
+      return *(it + 1);
   }
   return NULL;
 }
@@ -111,8 +155,9 @@ static double timestamp()
   return diff.count();
 }
 
-static bool parseCommand(const std::string& line)
+static bool parseCommand(const std::string& line, bool& failed)
 {
+  bool failure = true;
   std::vector<std::string> tokens;
   tokenize(line, " ", "\"", tokens, true);
   std::vector<std::string>::const_iterator it = tokens.begin();
@@ -122,9 +167,14 @@ static bool parseCommand(const std::string& line)
     upstr(token);
 
     if (token == "EXIT")
+    {
+      failed = false;
       return false;
+    }
     else if (token == "")
-    {}
+    {
+      failure = false;
+    }
     else if (token == "HELP")
     {
       PRINT("EXIT\n");
@@ -152,6 +202,7 @@ static bool parseCommand(const std::string& line)
       PRINT("PURGE FORCE\n");
       PRINT("  Clear the database.\n\n");
       PRINT("Type HELP to print this help.\n\n");
+      failure = false;
     }
     else if (token == "CREATE")
     {
@@ -165,21 +216,30 @@ static bool parseCommand(const std::string& line)
         ipf_close_db(&g_db);
       g_db = ipf_create_db(filepath.c_str(), "noname", sz);
       if (g_db)
+      {
         PERROR("Succeeded\n");
+        failure = false;
+      }
       else
         PERROR("Failed\n");
     }
     else if (token == "SETNAME")
     {
       if (++it != tokens.end() && g_db)
+      {
         ipf_rename_db(g_db, it->c_str());
+        failure = false;
+      }
       else
         PERROR("Error: Invalid context\n");
     }
     else if (token == "STATUS")
     {
       if (g_db)
+      {
         ipf_stat_db(g_db, stdout);
+        failure = false;
+      }
       else
         PERROR("Error: Invalid context\n");
     }
@@ -197,7 +257,10 @@ static bool parseCommand(const std::string& line)
             if (ipf_export_db(g_db, out) < 0)
               PERROR1("Error: Export failed (%d)\n", LASTERROR);
             else
+            {
               PERROR("Succeeded\n");
+              failure = false;
+            }
             fclose(out);
           }
           else
@@ -222,6 +285,7 @@ static bool parseCommand(const std::string& line)
         {
           ipf_purge_db(g_db);
           PERROR("Database has been purged\n");
+          failure = false;
         }
       }
       else
@@ -238,6 +302,7 @@ static bool parseCommand(const std::string& line)
           double t0 = timestamp();
           int r = ipf_query(g_db, &cidr);
           double d = timestamp() - t0;
+          failure = false;
           switch (r)
           {
           case ipf_not_found:
@@ -251,6 +316,7 @@ static bool parseCommand(const std::string& line)
             break;
           case ipf_error:
             PERROR1("Error: %d\n", LASTERROR);
+            failure = true;
             break;
           }
         }
@@ -272,9 +338,15 @@ static bool parseCommand(const std::string& line)
           ipf_response r = ipf_insert_rule(g_db, &cidr, ipf_rule_allow);
           double d = timestamp() - t0;
           if (r == ipf_allow)
+          {
             PRINT("Already exists\n");
+            failure = false;
+          }
           else if (r == ipf_not_found)
+          {
             PRINT1("Inserted, elap: %f sec\n", d);
+            failure = false;
+          }
           else
             PERROR1("Error: %d\n", LASTERROR);
         }
@@ -296,9 +368,15 @@ static bool parseCommand(const std::string& line)
           ipf_response r = ipf_insert_rule(g_db, &cidr, ipf_rule_deny);
           double d = timestamp() - t0;
           if (r == ipf_deny)
+          {
             PRINT("Entry already exists\n");
+            failure = false;
+          }
           else if (r == ipf_not_found)
+          {
             PRINT1("Inserted, elap: %f sec\n", d);
+            failure = false;
+          }
           else
             PERROR1("Error: %d\n", LASTERROR);
         }
@@ -338,7 +416,10 @@ static bool parseCommand(const std::string& line)
             d = timestamp() - d;
           }
           if (r == 0)
+          {
             PRINT1("Loaded, elap: %f sec\n", d);
+            failure = false;
+          }
           else
             PERROR1("Error: %d\n", r);
         }
@@ -357,7 +438,10 @@ static bool parseCommand(const std::string& line)
           ipf_close_db(&g_db);
         g_db = ipf_mount_db(param.c_str(), 1);
         if (g_db)
+        {
           PRINT("Mounted\n");
+          failure = false;
+        }
         else
           PERROR1("Error: %d\n", LASTERROR);
       }
@@ -369,6 +453,7 @@ static bool parseCommand(const std::string& line)
       PERROR("Error: Command invalid\n");
     }
   }
+  failed = failure;
   return true;
 }
 
@@ -415,7 +500,8 @@ static void readInStream()
         else
         {
           buf[len] = '\0';
-          if ((run = parseCommand(buf)))
+          bool failed;
+          if ((run = parseCommand(buf, failed)))
           {
             len = 0;
             prompt();
