@@ -961,7 +961,7 @@ int ipf_create_cidr_address_2(ipf_cidr_address * cidr,
 
   len = strlen(addr_str);
   p = addr_str + len;
-  while (*(--p) != '.' && p > addr_str);
+  while (p > addr_str && *(--p) != '.');
 
   /* parse ip4 address string */
   if (p > addr_str)
@@ -1012,7 +1012,7 @@ int ipf_create_cidr_address_2(ipf_cidr_address * cidr,
     {
       const char * ps = p;
       p = addr_str + len - 1;
-      while (*p != ':') --p;
+      while (*p != ':' && p > addr_str) --p;
       i = IPF_ADDR_SZ - 2;
       for (;;)
       {
@@ -1020,7 +1020,7 @@ int ipf_create_cidr_address_2(ipf_cidr_address * cidr,
         cidr->addr[i] = (val >> 8) & 0xff;
         cidr->addr[i+1] = val & 0xff;
         i -= 2;
-        while (*(--p) != ':' && p > addr_str);
+        while (p > addr_str && *(--p) != ':');
         if (*(p + 1) == ':' || p == addr_str)
           break;
       }
