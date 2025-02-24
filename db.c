@@ -27,21 +27,21 @@
  *
  * TREE STRUCTURE
  *
- * BIT                             0              1
- *                         +--------------+--------------+
- *  N                      | 00 0x05F004E | 00 0x05F0058 |
- *                         +-------+------+-------+------+
- *                                 |  NODE        |  NODE
- *                                 V              V
- *       +--------------+--------------+      +--------------+--------------+
- * N+1   | [10] 0x00000 | 00 0x05F00A2 |      | [01] 0x00000 | [00] 0x00000 |
- *       +--------------+-------+------+      +--------------+--------------+
- *         LEAF 2=DENY          |  NODE         LEAF 1=ALLOW       EMPTY
+ *
+ * BIT                    +-------0-------+-------1-------+
+ * N                      | [00] 0x5F004E | [00] 0x5F0058 |
+ *                        +-------+-------+-------+-------+
+ *                                |  NODE         |  NODE
+ *                                V               V
+ *      +-------0-------+-------1-------+   +-------0-------+-------1-------+
+ * N+1  | [10] 0x000000 | [00] 0x5F00A2 |   | [01] 0x000000 | [00] 0x000000 |
+ *      +---------------+-------+-------+   +---------------+---------------+
+ *        LEAF 2=DENY           |  NODE       LEAF 1=ALLOW    EMPTY
  *                              V
- *                         +--------------+--------------+
- * N+2                     | [01] 0x00000 | [10] 0x00000 |
- *                         +--------------+--------------+
- *                           LEAF 1=ALLOW   LEAF 2=DENY
+ *                        +-------0-------+-------1-------+
+ * N+2                    | [01] 0x000000 | [10] 0x000000 |
+ *                        +---------------+---------------+
+ *                          LEAF 1=ALLOW    LEAF 2=DENY
  *
  * 0.. = undefined
  * 00. = deny
@@ -284,6 +284,14 @@ static int ipf_mmap_database(mmap_ctx * ctx)
   /* mmap succeeded */
   ctx->allocated_bytes = size;
   return 0;
+}
+
+static int ipf_msync_database(mmap_ctx * ctx)
+{
+  /* check context */
+  if (!ctx->file || !ctx->addr)
+    return -(EINVAL);
+  return msync(ctx->addr, ctx->allocated_bytes, MS_SYNC);
 }
 
 static void ipf_free_mounted_db(IPF_DB * db)
@@ -683,9 +691,10 @@ ipf_response ipf_insert_rule(IPF_DB * db,
   return ipf_error;
 }
 
-void ipf_db_updated(IPF_DB * db)
+int ipf_flush_db(IPF_DB * db)
 {
   db->header->updated = time(NULL);
+  return ipf_msync_database(&(db->mmap_ctx));
 }
 
 ipf_response ipf_query(IPF_DB * db, ipf_cidr_address * cidr)

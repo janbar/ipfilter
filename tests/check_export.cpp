@@ -135,11 +135,11 @@ static int load_rules(IPF_DB * db)
       break;
     ++l;
   }
+  if (r != 0)
+    return -(EINVAL);
   if (l > 0)
-    ipf_db_updated(db);
-  if (r == 0)
-    return 0;
-  return -(EINVAL);
+    return ipf_flush_db(db);
+  return 0;
 }
 
 TEST_CASE("mount rw")

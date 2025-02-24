@@ -48,6 +48,7 @@ int load_cidr_file(IPF_DB * db, const char * filepath, ipf_rule rule);
 int load_rule_file(IPF_DB * db, const char * filepath);
 
 static IPF_DB * g_db = nullptr;
+static bool g_tainted = false;
 
 /*
  * the main function
@@ -102,8 +103,12 @@ int main(int argc, char** argv)
       }
       /* close database gracefully and exit */
       if (g_db)
+      {
+        if (g_tainted)
+          ret = ipf_flush_db(g_db);
         ipf_close_db(&g_db);
-      return (failed ? EXIT_FAILURE : EXIT_SUCCESS);
+      }
+      return (failed || ret != 0 ? EXIT_FAILURE : EXIT_SUCCESS);
     }
   }
 
@@ -111,9 +116,13 @@ int main(int argc, char** argv)
   readInStream();
 
   if (g_db)
+  {
+    if (g_tainted)
+      ret = ipf_flush_db(g_db);
     ipf_close_db(&g_db);
+  }
 
-  return ret;
+  return (ret != 0 ? EXIT_FAILURE : EXIT_SUCCESS);
 }
 
 static const char * getCmd(char **begin, char **end, const std::string& option)
@@ -201,6 +210,8 @@ static bool parseCommand(const std::string& line, bool& failed)
       PRINT("  Export the database rules to output or file.\n\n");
       PRINT("PURGE FORCE\n");
       PRINT("  Clear the database.\n\n");
+      PRINT("SYNC\n");
+      PRINT("  Force write back.\n\n");
       PRINT("Type HELP to print this help.\n\n");
       failure = false;
     }
@@ -218,6 +229,7 @@ static bool parseCommand(const std::string& line, bool& failed)
       if (g_db)
       {
         PERROR("Succeeded\n");
+        g_tainted = true;
         failure = false;
       }
       else
@@ -228,6 +240,7 @@ static bool parseCommand(const std::string& line, bool& failed)
       if (++it != tokens.end() && g_db)
       {
         ipf_rename_db(g_db, it->c_str());
+        g_tainted = true;
         failure = false;
       }
       else
@@ -284,8 +297,26 @@ static bool parseCommand(const std::string& line, bool& failed)
         if (param == "FORCE")
         {
           ipf_purge_db(g_db);
-          PERROR("Database has been purged\n");
+          g_tainted = true;
           failure = false;
+          PERROR("Database has been purged\n");
+        }
+      }
+      else
+        PERROR("Error: Invalid context\n");
+    }
+    else if (token == "SYNC")
+    {
+      if (g_db)
+      {
+        if (g_tainted)
+        {
+          g_tainted = false;
+          int r = ipf_flush_db(g_db);
+          if (r)
+            PERROR1("Error: %d\n", r);
+          else
+            failure = false;
         }
       }
       else
@@ -345,6 +376,7 @@ static bool parseCommand(const std::string& line, bool& failed)
           else if (r == ipf_not_found)
           {
             PRINT1("Inserted, elap: %f sec\n", d);
+            g_tainted = true;
             failure = false;
           }
           else
@@ -375,6 +407,7 @@ static bool parseCommand(const std::string& line, bool& failed)
           else if (r == ipf_not_found)
           {
             PRINT1("Inserted, elap: %f sec\n", d);
+            g_tainted = true;
             failure = false;
           }
           else
@@ -587,13 +620,18 @@ int load_cidr_file(IPF_DB * db, const char * filepath, ipf_rule rule)
   }
   PRINT1(" %u\n", c);
   fclose(file);
-  if (c > 0)
-    ipf_db_updated(db);
-  if (r == 0)
-    return 0;
-  line[r] = '\0';
-  PERROR2("ERROR: Insertion failed on '%s' at line %d.\n", line, l);
-  return -(EINVAL);
+  if (r != 0)
+  {
+    line[r] = '\0';
+    PERROR2("ERROR: Insertion failed on '%s' at line %d.\n", line, l);
+    return -(EINVAL);
+  }
+  if (c > 0 || g_tainted)
+  {
+    g_tainted = false;
+    return ipf_flush_db(db);
+  }
+  return 0;
 }
 
 int load_rule_file(IPF_DB * db, const char * filepath)
@@ -648,11 +686,16 @@ int load_rule_file(IPF_DB * db, const char * filepath)
   }
   PRINT1(" %u\n", c);
   fclose(file);
-  if (c > 0)
-    ipf_db_updated(db);
-  if (r == 0)
-    return 0;
-  line[r] = '\0';
-  PERROR2("ERROR: Insertion failed on '%s' at line %d.\n", line, l);
-  return -(EINVAL);
+  if (r != 0)
+  {
+    line[r] = '\0';
+    PERROR2("ERROR: Insertion failed on '%s' at line %d.\n", line, l);
+    return -(EINVAL);
+  }
+  if (c > 0 || g_tainted)
+  {
+    g_tainted = false;
+    return ipf_flush_db(db);
+  }
+  return 0;
 }

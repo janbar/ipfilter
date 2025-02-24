@@ -100,10 +100,11 @@ ipf_response ipf_insert_rule(IPF_DB * db,
                              ipf_rule rule);
 
 /**
- * Update timestamp of the database
+ * Flush the database
  * @param db The DB handle
+ * @return 0 on success, else error
  */
-void ipf_db_updated(IPF_DB * db);
+int ipf_flush_db(IPF_DB * db);
 
 /**
  * Mount database from the given db file. The db handle must be closed to free
