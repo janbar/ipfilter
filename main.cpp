@@ -48,7 +48,7 @@ int load_cidr_file(IPF_DB * db, const char * filepath, ipf_rule rule);
 int load_rule_file(IPF_DB * db, const char * filepath);
 
 static IPF_DB * g_db = nullptr;
-static bool g_tainted = false;
+static bool g_tainted = false;  /* need write back */
 
 /*
  * the main function
