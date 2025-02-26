@@ -71,6 +71,9 @@ int main(int argc, char** argv)
   if (!getCmd(cur, end, "-s"))
   {
     PRINT1("IPFILTER CLI (%s), Copyright (C) 2023 Jean-Luc Barriere\n", ipf_db_format());
+#ifdef LIBVERSION
+    PRINT("Version " LIBVERSION " compiled on " __DATE__ " at " __TIME__ "\n");
+#endif
   }
   /* processing all others arguments */
   while (++cur < end)

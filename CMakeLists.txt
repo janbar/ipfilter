@@ -7,12 +7,26 @@ set(CMAKE_C_STANDARD 99)
 
 set(CMAKE_MODULE_PATH "${PROJECT_SOURCE_DIR}/cmake")
 
+set (IPF_LIB_VERSION "4.2.5")
+set (IPF_LIB_SOVERSION 4)
+
 set(NGINX_SOURCE_DIR "" CACHE STRING "Path to the sources of NGINX")
 
 set(db_SOURCES db.c)
 set(db_HEADERS db.h)
 
+add_definitions(
+  "-DLIBVERSION=\"${IPF_LIB_VERSION}\""
+  "-DLIBSOVERSION=\"${IPF_LIB_SOVERSION}\""
+)
+
 add_library(db STATIC ${db_SOURCES})
+
+set_target_properties(db PROPERTIES
+  VERSION "${IPF_LIB_VERSION}"
+  SOVERSION "${IPF_LIB_SOVERSION}"
+)
+
 add_executable(ipfiltercli main.cpp ${db_SOURCES})
 
 if(${CMAKE_SYSTEM_NAME} STREQUAL "SunOS")
