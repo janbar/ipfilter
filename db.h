@@ -85,8 +85,9 @@ const char * ipf_db_name(IPF_DB * db);
  * Rename the database
  * @param db The DB handle
  * @param name The string of the new name (30 chars)
+ * @return 0 on success, else error
  */
-void ipf_rename_db(IPF_DB * db, const char * name);
+int ipf_rename_db(IPF_DB * db, const char * name);
 
 /**
  * Update database with a new rule for the given CIDR
@@ -129,11 +130,19 @@ IPF_DB * ipf_mount_db(const char * filepath, int rw);
 void ipf_stat_db(IPF_DB * db, FILE * out);
 
 /**
+ * Return access mode of the database
+ * @param db The DB handle
+ * @return 0 if read only, else 1
+ */
+int ipf_mode_rw(IPF_DB * db);
+
+/**
  * Purge the mounted RW database
  * That allows to defrag an existing database, to be refilled on the fly.
  * @param db The DB handle
+ * @return 0 on success, else error
  */
-void ipf_purge_db(IPF_DB * db);
+int ipf_purge_db(IPF_DB * db);
 
 /**
  * Close the database and free allocated resources

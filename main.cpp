@@ -197,6 +197,8 @@ static bool parseCommand(const std::string& line, bool& failed)
       PRINT("  Rename the database.\n\n");
       PRINT("MOUNT {file path}\n");
       PRINT("  Mount database from binary db file.\n\n");
+      PRINT("MOUNT READONLY {file path}\n");
+      PRINT("  Mount read only database from binary db file.\n\n");
       PRINT("STATUS\n");
       PRINT("  Show statistics of the database.\n\n");
       PRINT("ALLOW {CIDR}\n");
@@ -242,9 +244,14 @@ static bool parseCommand(const std::string& line, bool& failed)
     {
       if (++it != tokens.end() && g_db)
       {
-        ipf_rename_db(g_db, it->c_str());
-        g_tainted = true;
-        failure = false;
+        int r = ipf_rename_db(g_db, it->c_str());
+        if (r)
+          PERROR1("Error: %d\n", r);
+        else
+        {
+          g_tainted = true;
+          failure = false;
+        }
       }
       else
         PERROR("Error: Invalid context\n");
@@ -299,10 +306,15 @@ static bool parseCommand(const std::string& line, bool& failed)
         upstr(param);
         if (param == "FORCE")
         {
-          ipf_purge_db(g_db);
-          g_tainted = true;
-          failure = false;
-          PERROR("Database has been purged\n");
+          int r = ipf_purge_db(g_db);
+          if (r)
+            PERROR1("Error: %d\n", r);
+          else
+          {
+            g_tainted = true;
+            failure = false;
+            PERROR("Database has been purged\n");
+          }
         }
       }
       else
@@ -382,8 +394,10 @@ static bool parseCommand(const std::string& line, bool& failed)
             g_tainted = true;
             failure = false;
           }
-          else
+          else if (ipf_mode_rw(g_db))
             PERROR1("Error: %d\n", LASTERROR);
+          else
+            PERROR1("Error: %d\n", -(EPERM));
         }
         else
           PERROR("Error: Invalid argument\n");
@@ -413,8 +427,10 @@ static bool parseCommand(const std::string& line, bool& failed)
             g_tainted = true;
             failure = false;
           }
-          else
+          else if (ipf_mode_rw(g_db))
             PERROR1("Error: %d\n", LASTERROR);
+          else
+            PERROR1("Error: %d\n", -(EPERM));
         }
         else
           PERROR("Error: Invalid argument\n");
@@ -470,16 +486,40 @@ static bool parseCommand(const std::string& line, bool& failed)
       if (++it != tokens.end())
       {
         std::string param(*it);
-        if (g_db)
-          ipf_close_db(&g_db);
-        g_db = ipf_mount_db(param.c_str(), 1);
-        if (g_db)
+        upstr(param);
+        if (param == "READONLY")
         {
-          PRINT("Mounted\n");
-          failure = false;
+          if (++it != tokens.end())
+          {
+            param.assign(*it);
+            if (g_db)
+              ipf_close_db(&g_db);
+            g_db = ipf_mount_db(param.c_str(), 0);
+            if (g_db)
+            {
+              PRINT("Mounted read only\n");
+              failure = false;
+            }
+            else
+              PERROR1("Error: %d\n", LASTERROR);
+          }
+          else
+            PERROR("Error: Missing argument\n");
         }
         else
-          PERROR1("Error: %d\n", LASTERROR);
+        {
+          param.assign(*it);
+          if (g_db)
+            ipf_close_db(&g_db);
+          g_db = ipf_mount_db(param.c_str(), 1);
+          if (g_db)
+          {
+            PRINT("Mounted\n");
+            failure = false;
+          }
+          else
+            PERROR1("Error: %d\n", LASTERROR);
+        }
       }
       else
         PERROR("Error: Invalid argument\n");

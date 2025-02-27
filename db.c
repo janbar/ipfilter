@@ -65,6 +65,8 @@
 #include <unistd.h>
 #include <sys/mman.h>
 #include <sys/stat.h>
+#include <sys/file.h>
+#include <fcntl.h>
 #include <inttypes.h>
 #include <arpa/inet.h>
 
@@ -306,6 +308,9 @@ static void ipf_free_mounted_db(IPF_DB * db)
       void * addr = (char*)(db->mmap_ctx.addr) + db->mmap_ctx.allocated_bytes;
       munmap(addr, db->mmap_ctx.reserved_bytes - db->mmap_ctx.allocated_bytes);
     }
+    /* clear lock */
+    if (db->mmap_ctx.flag_rw)
+      flock(fileno(db->mmap_ctx.file), LOCK_UN);
     fclose(db->mmap_ctx.file);
     free(db);
   }
@@ -442,9 +447,12 @@ const char * ipf_db_name(IPF_DB * db)
   return db->header->db_name;
 }
 
-void ipf_rename_db(IPF_DB *db, const char * name)
+int ipf_rename_db(IPF_DB *db, const char * name)
 {
+  if (!db->mmap_ctx.flag_rw)
+    return -(EPERM);
   strncpy(db->header->db_name, name, 30);
+  return 0;
 }
 
 static size_t ipf_max_db_file_size(uint16_t seg_mask)
@@ -536,6 +544,11 @@ void ipf_stat_db(IPF_DB * db, FILE * out)
   fprintf(out, "freelist   : %08x\n", header->free_addr);
   fprintf(out, "rootnode4  : %08x\n", header->root4_addr);
   fprintf(out, "rootnode6  : %08x\n", header->root6_addr);
+}
+
+int ipf_mode_rw(IPF_DB * db)
+{
+  return (db->mmap_ctx.flag_rw ? 1 : 0);
 }
 
 void ipf_close_db(IPF_DB ** db)
@@ -681,18 +694,23 @@ ipf_response ipf_insert_rule(IPF_DB * db,
                              ipf_cidr_address * cidr,
                              ipf_rule rule)
 {
+  if (!db->mmap_ctx.flag_rw)
+    return ipf_error;
   switch (rule)
   {
   case ipf_rule_allow:
     return ipf_create_leaf(db, cidr, LEAF_ALLOW);
   case ipf_rule_deny:
     return ipf_create_leaf(db, cidr, LEAF_DENY);
+  default:
+    return ipf_error;
   }
-  return ipf_error;
 }
 
 int ipf_flush_db(IPF_DB * db)
 {
+  if (!db->mmap_ctx.flag_rw)
+    return -(EPERM);
   db->header->updated = time(NULL);
   return ipf_msync_database(&(db->mmap_ctx));
 }
@@ -752,15 +770,17 @@ ipf_response ipf_query(IPF_DB * db, ipf_cidr_address * cidr)
   return ipf_not_found;
 }
 
-void ipf_purge_db(IPF_DB * db)
+int ipf_purge_db(IPF_DB * db)
 {
   unsigned s;
   node * seg;
   db_header * header = db->header;
 
+  if (!db->mmap_ctx.flag_rw)
+    return -(EPERM);
   /* at least one segment should be initialized, else the db is invalid */
   if (db->cache.seg_nb < 1)
-    return;
+    return -(EINVAL);
 
   /* reset the ip4 root node now */
   seg = ipf_get_node(db, header->root4_addr);
@@ -796,6 +816,7 @@ void ipf_purge_db(IPF_DB * db)
   }
   ipf_new_node(db, &(header->root4_addr));
   ipf_new_node(db, &(header->root6_addr));
+  return 0;
 }
 
 static int ipf_read_db_header(db_header * header, FILE * file)
@@ -825,7 +846,12 @@ IPF_DB * ipf_mount_db(const char * filepath, int rw)
 
   /* return the already mounted db */
   if ((db = ipf_hold_mounted(filepath)))
+  {
+    /* fails if requested mode doesn't match */
+    if (rw && !db->mmap_ctx.flag_rw)
+      return NULL;
     return db;
+  }
 
   /* mount the db */
   if (rw)
@@ -856,7 +882,7 @@ IPF_DB * ipf_mount_db(const char * filepath, int rw)
   /* allocated size cannot be less than stated from file header */
   if (mmap_ctx.allocated_bytes < sizeof(db_header) +
           (file_header->seg_nb * SEGMENT_SIZE(file_header->seg_mask) * sizeof (node)))
-    goto fail3;
+    goto fail2;
 
   addr = (char*) mmap_ctx.addr;
 
@@ -866,7 +892,6 @@ IPF_DB * ipf_mount_db(const char * filepath, int rw)
   /* keep in cache the older known state, therefore from file header */
   db->cache.seg_nb = file_header->seg_nb;
   db->cache.seg_sz = SEGMENT_SIZE(file_header->seg_mask);
-  free(file_header);
 
   /* init the database */
   db->header = (db_header*) addr;
@@ -874,6 +899,14 @@ IPF_DB * ipf_mount_db(const char * filepath, int rw)
   db->mmap_ctx = mmap_ctx;
   db->data = (node *) (addr + sizeof (db_header));
 
+  if (rw)
+  {
+    if (flock(fileno(db->mmap_ctx.file), LOCK_EX | LOCK_NB) != 0)
+      goto fail3;
+  }
+
+  /* free local storage */
+  free(file_header);
   /* register the mounted db */
   ipf_register_mounted(filepath, db);
   return db;
