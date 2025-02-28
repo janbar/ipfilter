@@ -402,6 +402,8 @@ static node * ipf_new_node(IPF_DB * db, uint32_t * node_id)
   {
     uint32_t freeaddr = header->free_addr;
     node * freenode = ipf_get_node(db, freeaddr);
+    if (!freenode)
+      return NULL; /* corruption */
 
     if (freenode->raw0 & ADDR)
     {
@@ -784,10 +786,14 @@ int ipf_purge_db(IPF_DB * db)
 
   /* reset the ip4 root node now */
   seg = ipf_get_node(db, header->root4_addr);
+  if (!seg)
+    return -(EINVAL);
   seg->raw0 = 0;
   seg->raw1 = 0;
   /* reset the ip6 root node now */
   seg = ipf_get_node(db, header->root6_addr);
+  if (!seg)
+    return -(EINVAL);
   seg->raw0 = 0;
   seg->raw1 = 0;
   /* reset freelist */
