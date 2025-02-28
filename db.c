@@ -300,14 +300,14 @@ static void ipf_free_mounted_db(IPF_DB * db)
 {
   if (ipf_release_mounted(db) == 0)
   {
-    /* free allocated space */
-    munmap(db->mmap_ctx.addr, db->mmap_ctx.allocated_bytes);
-    /* free the rest of reserved space */
+    /* free unused segment */
     if (db->mmap_ctx.reserved_bytes > db->mmap_ctx.allocated_bytes)
     {
       void * addr = (char*)(db->mmap_ctx.addr) + db->mmap_ctx.allocated_bytes;
       munmap(addr, db->mmap_ctx.reserved_bytes - db->mmap_ctx.allocated_bytes);
     }
+    /* free allocated segment */
+    munmap(db->mmap_ctx.addr, db->mmap_ctx.allocated_bytes);
     /* clear lock */
     if (db->mmap_ctx.flag_rw)
       flock(fileno(db->mmap_ctx.file), LOCK_UN);
