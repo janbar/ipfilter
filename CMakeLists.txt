@@ -7,7 +7,7 @@ set(CMAKE_C_STANDARD 99)
 
 set(CMAKE_MODULE_PATH "${PROJECT_SOURCE_DIR}/cmake")
 
-set (IPF_LIB_VERSION "4.2.5")
+set (IPF_LIB_VERSION "4.2.6")
 set (IPF_LIB_SOVERSION 4)
 
 set(NGINX_SOURCE_DIR "" CACHE STRING "Path to the sources of NGINX")
