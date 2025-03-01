@@ -69,7 +69,7 @@ static unsigned _readln(char * buf, unsigned n, FILE * file)
   return r;
 }
 
-static uint32_t ipf_hash(uint32_t maxsize, const char * buf, unsigned len)
+static uint32_t hash32_dbj(uint32_t maxsize, const char * buf, unsigned len)
 {
   /*
    * DJB Hash Function
@@ -142,11 +142,11 @@ static int load_rules(IPF_DB * db)
   return 0;
 }
 
-TEST_CASE("mount rw")
+TEST_CASE("mount and purge")
 {
   db = ipf_mount_db(tmpdb, 1);
   REQUIRE(db != NULL);
-  ipf_purge_db(db);
+  REQUIRE(ipf_purge_db(db) == 0);
 }
 
 TEST_CASE("import")
@@ -186,7 +186,7 @@ TEST_CASE("export")
   snprintf(line, 11, "%08x: ", h);
   while ((r = _readln(line + 10, sizeof (line) - 11, file)))
   {
-    h = ipf_hash(0xffffffff, line, r + 10);
+    h = hash32_dbj(0xffffffff, line, r + 10);
     snprintf(line, 11, "%08x: ", h);
   }
   fclose(file);

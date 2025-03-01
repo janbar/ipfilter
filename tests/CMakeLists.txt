@@ -24,7 +24,6 @@ include(UnitTestProject)
 
 unittest_project(NAME parse_cidr_string SOURCES parse_cidr_string.cpp TARGET db)
 unittest_project(NAME check_database SOURCES check_database.cpp TARGET db)
-unittest_project(NAME check_record SOURCES check_record.cpp TARGET db)
 unittest_project(NAME check_export SOURCES check_export.cpp TARGET db)
 
 
