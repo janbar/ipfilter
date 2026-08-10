@@ -468,7 +468,7 @@ static node * ipf_new_node(IPF_DB * db, uint32_t * node_id)
   return NULL;
 }
 
-const char * ipf_db_format()
+const char * ipf_db_format(void)
 {
   return ipf_dbtag;
 }

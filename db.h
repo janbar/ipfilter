@@ -51,7 +51,7 @@ typedef enum
   ipf_rule_deny  = ipf_deny,
 } ipf_rule;
 
-const char * ipf_db_format();
+const char * ipf_db_format(void);
 
 /**
  * Create database with the given segment size (default 0 = 256).
