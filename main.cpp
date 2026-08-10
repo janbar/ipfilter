@@ -227,7 +227,7 @@ static bool parseCommand(const std::string& line, bool& failed)
       if (++it != tokens.end())
         filepath.assign(*it);
       if (++it != tokens.end())
-        sscanf((*it).c_str(), "%d", &sz);
+        sscanf((*it).c_str(), "%u", &sz);
       if (g_db)
         ipf_close_db(&g_db);
       g_db = ipf_create_db(filepath.c_str(), "noname", sz);
