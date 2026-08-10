@@ -296,6 +296,35 @@ static int ipf_msync_database(mmap_ctx * ctx)
   return msync(ctx->addr, ctx->allocated_bytes, MS_SYNC);
 }
 
+/**
+ * Try to hold the exclusive lock on database
+ * Return -1 on failure (the lock is held by another process)
+ */
+static int ipf_db_lock(IPF_DB * db)
+{
+  /* set exclusive lock for the entire file */
+  struct flock lck;
+  lck.l_type = F_WRLCK;
+  lck.l_whence = SEEK_SET;
+  lck.l_start = 0;
+  lck.l_len = 0;
+  return fcntl(fileno(db->mmap_ctx.file), F_SETLK, &lck);
+}
+
+/**
+ * Release the exclusive lock on database
+ */
+static void ipf_db_unlock(IPF_DB * db)
+{
+  /* release lock */
+  struct flock lck;
+  lck.l_type = F_UNLCK;
+  lck.l_whence = SEEK_SET;
+  lck.l_start = 0;
+  lck.l_len = 0;
+  (void) fcntl(fileno(db->mmap_ctx.file), F_SETLK, &lck);
+}
+
 static void ipf_free_mounted_db(IPF_DB * db)
 {
   if (ipf_release_mounted(db) == 0)
@@ -310,7 +339,7 @@ static void ipf_free_mounted_db(IPF_DB * db)
     munmap(db->mmap_ctx.addr, db->mmap_ctx.allocated_bytes);
     /* clear lock */
     if (db->mmap_ctx.flag_rw)
-      flock(fileno(db->mmap_ctx.file), LOCK_UN);
+      ipf_db_unlock(db);
     fclose(db->mmap_ctx.file);
     free(db);
   }
@@ -907,7 +936,7 @@ IPF_DB * ipf_mount_db(const char * filepath, int rw)
 
   if (rw)
   {
-    if (flock(fileno(db->mmap_ctx.file), LOCK_EX | LOCK_NB) != 0)
+    if (ipf_db_lock(db) < 0)
       goto fail3;
   }
 
